@@ -5,8 +5,8 @@ audit trail, a price-time priority matching engine, a simulated market data feed
 P&L tracking, and pre-trade risk — built as five Spring Boot microservices over Kafka,
 PostgreSQL and Redis.
 
-> **Build status:** Phase 1 of 7 complete (architecture, domain model, Kafka event design,
-> Maven skeleton). `./mvnw verify` is green. See [Roadmap](#roadmap).
+> **Build status:** Phase 2 of 7 complete. order-service is feature-complete end to end.
+> `./mvnw test` is green: 73 tests. See [Roadmap](#roadmap).
 
 ## Why this project exists
 
@@ -50,6 +50,8 @@ Read in this order:
    requirement.
 6. **[ops/kafka-topics.md](ops/kafka-topics.md)** — topic provisioning and the operational
    commands that matter.
+7. **[docs/order-service.md](docs/order-service.md)** — the first service in full: API, error
+   contract, schema, order flow, risk suite, configuration and the test pyramid.
 
 ## Repository layout
 
@@ -106,7 +108,7 @@ If you only read three things:
 | Phase | Contents | Status |
 |---|---|---|
 | 1 | Architecture, domain model, Kafka event design, Maven skeleton | ✅ Complete |
-| 2 | order-service end to end: JPA, Flyway, risk, state machine, outbox, tests | ⏳ |
+| 2 | order-service end to end: JPA, Flyway, risk, state machine, outbox, tests | ✅ Complete |
 | 3 | matching-engine: order book, concurrency design, JMH harness, tuning pass | ⏳ |
 | 4 | market-data-service (backpressure) + position-service (P&L) | ⏳ |
 | 5 | api-gateway, Spring Security/JWT, OpenAPI | ⏳ |

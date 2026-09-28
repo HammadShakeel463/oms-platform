@@ -9,5 +9,5 @@ the old one.
 | [0001](0001-microservice-boundaries-and-a-shared-contract-module.md) | Microservice boundaries, and a shared contract module that holds no entities | Accepted | 1 |
 | [0002](0002-fixed-point-money-long-ticks-in-the-engine-bigdecimal-at-the-boundary.md) | Fixed-point money: `long` ticks in the engine, `BigDecimal` at the boundary | Accepted | 1 |
 | [0003](0003-json-events-without-a-schema-registry.md) | JSON event payloads, no Schema Registry, versioned topic names | Accepted | 1 |
-| 0004 | Transactional outbox instead of dual-write to Kafka | Planned | 2 |
+| [0004](0004-transactional-outbox-instead-of-dual-write.md) | Transactional outbox instead of a dual write to Kafka | Accepted | 2 |
 | 0005 | Single-writer-per-book concurrency instead of a lock-free order book | Planned | 3 |

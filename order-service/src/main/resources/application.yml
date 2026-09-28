@@ -2,10 +2,85 @@ spring:
   application:
     name: order-service
 
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:oms}
+    username: ${DB_USER:oms_order}
+    password: ${DB_PASSWORD:oms_order}
+    hikari:
+      # Pool sizing is not "bigger is better". Every connection is a backend process in
+      # PostgreSQL; past the point where the database can keep them all busy, more
+      # connections add context switching and lock contention while throughput flattens.
+      # 10 per instance is a sane start for a service whose transactions are short.
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 3000      # fail fast rather than queue requests behind an empty pool
+      pool-name: order-service-pool
+
+  jpa:
+    open-in-view: false
+    # OSIV keeps the Hibernate session open for the whole request so lazy loading works
+    # during JSON serialisation. It is on by default and it is a trap: it holds a database
+    # connection while bytes are written to a socket, and it hides N+1 queries in the view
+    # layer where no profiler is looking. Off, deliberately - which is also why every
+    # response is a DTO mapped inside the transaction.
+    hibernate:
+      ddl-auto: validate
+      # validate, never update. Flyway owns the schema; Hibernate's job is to confirm the
+      # mapping matches it and to refuse to start if it does not. ddl-auto=update in a
+      # service that also runs migrations is two things writing the same schema.
+    properties:
+      hibernate:
+        default_schema: oms_order
+        jdbc:
+          batch_size: 50
+          time_zone: UTC
+        order_inserts: true
+        order_updates: true
+        query:
+          fail_on_pagination_over_collection_fetch: true
+    show-sql: false
+
+  flyway:
+    enabled: true
+    schemas: oms_order
+    default-schema: oms_order
+    create-schemas: true
+    locations: classpath:db/migration
+    validate-on-migrate: true
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 1s
+      # A cache must never be able to stall the order path. One second, then carry on
+      # without it.
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    consumer:
+      group-id: order-service-fills
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+    listener:
+      ack-mode: record
+      missing-topics-fatal: false
+
+  threads:
+    virtual:
+      # Requires a Java 21+ runtime. The code targets release 17 (the JD baseline), so this
+      # is off by default and enabled through the "vthreads" profile - see
+      # application-vthreads.yml. Turning it on here would make the service fail to start on
+      # the very runtime the JD asks for.
+      enabled: false
+
 server:
   port: 8081
   shutdown: graceful
 
+# Graceful shutdown matters more than it looks for this service: in-flight orders finish
+# and the outbox drains before the process exits, instead of leaving rows for the next
+# instance to notice.
 management:
   endpoints:
     web:
@@ -14,13 +89,40 @@ management:
   endpoint:
     health:
       probes:
-        enabled: true     # /actuator/health/liveness and /readiness for Kubernetes
+        enabled: true
       show-details: when_authorized
+      group:
+        readiness:
+          # Readiness includes the dependencies that must be up to serve traffic. Redis is
+          # deliberately absent: a cold cache degrades latency, it does not break
+          # correctness, and taking the pod out of rotation for it would be an outage
+          # caused by a cache.
+          include: db, ping
   metrics:
     tags:
       application: ${spring.application.name}
+  observations:
+    key-values:
+      service: order-service
+
+oms:
+  reference:
+    # static  = built-in catalogue, no market-data-service required (default until Phase 4)
+    # remote  = fetch from market-data-service over REST, cached in Redis
+    source: ${REFERENCE_SOURCE:static}
+    market-data-url: ${MARKET_DATA_URL:http://localhost:8083}
+  order:
+    market-order-slippage: 0.05        # risk prices a MARKET order 5% through the reference
+    outbox-batch-size: 200
+    outbox-poll-interval: 200          # ms between outbox drains
+    outbox-retention: 3d
+    outbox-cleanup-cron: "0 */15 * * * *"
+    trade-consumer-group: order-service-fills
 
 logging:
   level:
     root: INFO
     com.oms: DEBUG
+    org.hibernate.SQL: INFO
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{traceId:-}] %logger{36} - %msg%n"

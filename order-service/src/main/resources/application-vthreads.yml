@@ -1,0 +1,23 @@
+# Enable with: --spring.profiles.active=vthreads   (requires a Java 21+ runtime)
+#
+# What this changes: Tomcat stops using a bounded pool of ~200 platform threads and runs
+# each request on a virtual thread instead. For a service like this one - blocking JDBC,
+# blocking HTTP to market-data-service, almost no CPU work - that removes the thread pool
+# as a concurrency ceiling. Under a slow downstream dependency the old failure mode is the
+# request pool filling up and everything queueing behind it; a virtual thread parked on a
+# blocking call costs a few hundred bytes of heap, so that ceiling moves by orders of
+# magnitude.
+#
+# What it does NOT change: the JDBC connection pool. Ten connections is still ten
+# connections, and if anything virtual threads make it easier to pile 10,000 requests onto
+# that pool. The bottleneck moves; it does not disappear. This is exactly the lesson from
+# tuning thread-per-connection C++ servers - raising the concurrency limit only helps until
+# you hit the next resource, and the next resource here is the database.
+#
+# Caveat worth knowing: code that synchronizes on a monitor around a blocking call pins the
+# carrier thread in JDK 21 (fixed in 24+). Virtual threads reward code that blocks on I/O
+# and punishes code that blocks on locks.
+spring:
+  threads:
+    virtual:
+      enabled: true

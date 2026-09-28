@@ -1,0 +1,31 @@
+# Profile used by the Testcontainers integration tests.
+# Connection details come from @ServiceConnection; only behaviour is set here.
+
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: validate      # still validate: the test proves Flyway and the mappings agree
+  kafka:
+    consumer:
+      group-id: order-service-fills-it
+      auto-offset-reset: earliest
+    listener:
+      missing-topics-fatal: false
+
+oms:
+  reference:
+    source: static            # no market-data-service in these tests
+  order:
+    market-order-slippage: 0.05
+    outbox-batch-size: 100
+    # Poll fast so a test does not wait a whole second to observe a published event.
+    outbox-poll-interval: 50
+    outbox-retention: 1d
+    trade-consumer-group: order-service-fills-it
+
+logging:
+  level:
+    org.testcontainers: WARN
+    com.github.dockerjava: WARN
+    org.apache.kafka: WARN
+    com.oms: DEBUG
