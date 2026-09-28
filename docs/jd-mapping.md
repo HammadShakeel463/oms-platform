@@ -7,9 +7,9 @@ What to point at when a job description lists a technology. Kept current as each
 | Java 17 | `maven.compiler.release=17`; records, sealed interfaces, pattern matching, `EnumMap`/`EnumSet` | 1 | ✅ |
 | — records | every event, `ApiError`, `InstrumentView`, `QuoteSnapshot` | 1 | ✅ |
 | — sealed interfaces | `DomainEvent` | 1 | ✅ |
-| — pattern matching | `instanceof` patterns in entity/key equality; switch patterns in Phase 4 | 2, 4 | ✅ partial |
+| — pattern matching | `instanceof` patterns; switch patterns over sealed `DomainEvent` in Phase 4 | 2, 4 | ✅ partial |
 | — virtual threads | `vthreads` profile on order-service; streaming endpoint | 2, 4 | ✅ profile |
-| Maven multi-module | parent POM + 6 modules, BOM-managed versions | 1 | ✅ |
+| Maven multi-module | parent POM + 8 modules, BOM-managed versions, a Boot auto-configuration library | 1, 3 | ✅ |
 | Spring Boot 3.x | Boot 3.5.16, all five services | 1 | ✅ |
 | — Spring Web | `OrderController` + 3 more to come | 2–4 | ✅ order |
 | — Spring Data JPA + Hibernate | 6 entities, 6 repositories, derived + JPQL + native SQL | 2, 4 | ✅ order |
@@ -25,14 +25,14 @@ What to point at when a job description lists a technology. Kept current as each
 | Role-based access | `ROLE_TRADER` / `ROLE_RISK` / `ROLE_ADMIN` | 5 | ⏳ |
 | JUnit 5 | every module; Surefire wired | 1 | ✅ |
 | Mockito | `OrderServiceTest`, `TradeApplicationServiceTest`, `@MockitoBean` | 2 | ✅ |
-| Testcontainers | `OrderPersistenceIT`, `OrderFlowIT` — Postgres + Kafka + Redis | 2–4 | ✅ written |
+| Testcontainers | `OrderPersistenceIT`, `OrderFlowIT`, `MatchingEngineFlowIT` | 2–4 | ✅ written |
 | Coverage > 70% | JaCoCo `coverage-gate` profile, enforced in CI | 1 (wired) 6 (gated) | ✅ wired |
 | Global exception handling | `GlobalExceptionHandler`: 9 handlers, one contract | 1, 2 | ✅ |
 | Docker / docker-compose | one-command full stack | 6 | ⏳ |
 | Kubernetes manifests | Deployment, Service, ConfigMap, Secret per service | 6 | ⏳ |
 | GitHub Actions CI/CD | build, test, coverage gate, image publish | 6 | ⏳ |
 | Structured JSON logging | logstash-logback-encoder, MDC with trace + order id | 6 | ⏳ |
-| Micrometer + Prometheus + Grafana | registry wired in every service; dashboard JSON | 1 (wired) 6 (dashboard) | ✅ wired |
+| Micrometer + Prometheus + Grafana | registry in every service; engine exports a real percentile histogram, not a mean | 1 (wired) 6 (dashboard) | ✅ wired |
 | Distributed tracing | Micrometer Tracing → OTLP, propagated over Kafka headers | 6 | ⏳ |
 
 ## Domain differentiators — the part that is not on any JD
@@ -42,10 +42,10 @@ capital-markets employer will actually want to talk about.
 
 | Differentiator | Where | Phase |
 |---|---|---|
-| Price-time priority matching engine, limit + market, partial fills, IOC/FOK | `matching-engine` | 3 |
-| Documented concurrency design; single-writer-per-book via Kafka partitioning | ADR 0005 + `docs/concurrency.md` | 3 |
-| JMH harness: throughput and p50/p95/p99 matching latency | `matching-engine` bench module | 3 |
-| A real measure → fix → re-measure tuning pass with before/after numbers | `docs/performance.md` | 3 |
+| Price-time priority matching engine, limit + market, partial fills, IOC/FOK | `matching-engine` | 3 ✅ |
+| Documented concurrency design; single-writer-per-book via Kafka partitioning | ADR 0005 + `docs/concurrency.md` | 3 ✅ |
+| JMH harness: throughput and p50/p95/p99 latency, plus a GC-profiler allocation figure | `matching-bench` | 3 ✅ |
+| A real measure → fix → re-measure tuning pass with before/after numbers | `docs/performance.md` | 3 ✅ |
 | Immutable audit trail as source of truth; order row is a derived cache | `order_audit` + append-only trigger | 2 ✅ |
 | Transactional outbox — no dual write to Kafka, `FOR UPDATE SKIP LOCKED` | ADR 0004 | 2 ✅ |
 | Pre-trade risk suite: 6 ordered checks, worst-case position exposure | `order-service` risk package | 2 ✅ |

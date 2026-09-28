@@ -8,5 +8,5 @@ build/
 out/
 *.hprof
 *.jfr
-jmh-result.*
+jmh-run.log
 .env

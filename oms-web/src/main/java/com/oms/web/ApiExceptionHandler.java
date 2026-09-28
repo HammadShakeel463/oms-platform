@@ -1,4 +1,4 @@
-package com.oms.order.api;
+package com.oms.web;
 
 import com.oms.common.error.ApiError;
 import com.oms.common.error.ErrorCode;
@@ -8,8 +8,8 @@ import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
-import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -23,37 +23,36 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Turns every exception into the one error contract.
+ * Turns every exception into the one {@link ApiError} contract, in every service.
  *
- * <p>{@code @RestControllerAdvice} registers these handlers across every controller in the
- * application. The alternative - try/catch in each controller method - produces the failure
- * mode this class exists to prevent: the same condition returning a different status and a
- * different body depending on which endpoint hit it.
+ * <p>Lives in {@code oms-web} rather than in each service because the alternative is four
+ * copies that drift: the same failure returning 422 from one service and 500 from another is
+ * exactly the defect a shared error contract exists to prevent. It cannot live in
+ * {@code oms-common}, which is deliberately free of Spring (ADR 0001) - so the contract
+ * (records, enums) is in one module and the rendering of it is in another.
  *
- * <p>Handler selection is by most-specific exception type, so
- * {@code handleValidation(MethodArgumentNotValidException)} wins over the {@code Exception}
- * catch-all without any ordering annotation.
- *
- * <p>A C++ reader will recognise the shape: this is the single top-level catch that turns
- * an exception into a return code for the caller. The difference is that it is installed
- * declaratively and applies to every request handler in the process, including ones written
- * later by someone who never reads this class.
+ * <p><b>Ordering.</b> This advice is {@code LOWEST_PRECEDENCE} because it owns the
+ * {@code Exception} catch-all. Spring resolves a handler by walking advices in order and
+ * taking the best match <em>within the first advice that has one</em>, so a catch-all in a
+ * high-precedence advice would swallow exceptions that a more specific handler elsewhere -
+ * {@link PersistenceExceptionHandler} - was written for. The catch-all must be consulted last.
  */
 @RestControllerAdvice
-public class GlobalExceptionHandler {
+@Order(Ordered.LOWEST_PRECEDENCE)
+public class ApiExceptionHandler {
 
-    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+    private static final Logger log = LoggerFactory.getLogger(ApiExceptionHandler.class);
 
     /**
-     * Every deliberate failure in the platform. The status and the code both come from the
-     * exception, so a new error type needs no change here.
+     * Every deliberate failure in the platform. The status and the machine-readable code both
+     * come from the exception, so a new error type needs no change here.
      */
     @ExceptionHandler(OmsException.class)
     public ResponseEntity<ApiError> handleOms(OmsException e, HttpServletRequest request) {
         ErrorCode code = e.errorCode();
-        // 5xx is a fault in this service and gets a stack trace; 4xx is the caller being
-        // told something and gets one line. Logging client errors at ERROR with stack
-        // traces is how an error log stops being useful.
+        // 5xx is a fault in this service and gets a stack trace; 4xx is the caller being told
+        // something and gets one line. Logging client errors at ERROR with stack traces is how
+        // an error log stops being useful.
         if (code.httpStatus() >= 500) {
             log.error("{} handling {} {}", code, request.getMethod(), request.getRequestURI(), e);
         } else {
@@ -79,7 +78,7 @@ public class GlobalExceptionHandler {
                         request.getRequestURI(), traceId(), fieldErrors));
     }
 
-    /** Bean Validation failures on {@code @RequestParam}/{@code @PathVariable}. */
+    /** Bean Validation failures on {@code @RequestParam} / {@code @PathVariable}. */
     @ExceptionHandler(ConstraintViolationException.class)
     public ResponseEntity<ApiError> handleConstraintViolation(ConstraintViolationException e,
                                                               HttpServletRequest request) {
@@ -99,10 +98,9 @@ public class GlobalExceptionHandler {
      * Unparseable JSON, or a value that cannot be bound - an unknown enum constant, a
      * malformed UUID, a string where a number belongs.
      *
-     * <p>The exception message is deliberately not echoed: Jackson's message quotes the
-     * offending input and the target class name, which hands an attacker a map of internal
-     * types. The caller gets a stable, unhelpful-on-purpose message; the detail goes to the
-     * log with the trace id.
+     * <p>The exception message is deliberately not echoed: Jackson quotes the offending input
+     * and the target class name, which hands a caller a map of internal types. The detail goes
+     * to the log with the trace id.
      */
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ApiError> handleUnreadable(HttpMessageNotReadableException e,
@@ -128,33 +126,10 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * Two orders for the same {@code (accountId, clientOrderId)} raced past the pre-check
-     * and one lost at the UNIQUE constraint. That is the constraint doing its job, so it is
-     * reported as a 409 rather than a 500.
-     */
-    @ExceptionHandler(DataIntegrityViolationException.class)
-    public ResponseEntity<ApiError> handleIntegrity(DataIntegrityViolationException e,
-                                                    HttpServletRequest request) {
-        log.warn("Integrity violation on {} {}: {}", request.getMethod(),
-                request.getRequestURI(), e.getMostSpecificCause().getMessage());
-        return respond(ErrorCode.DUPLICATE_CLIENT_ORDER_ID,
-                "The request conflicts with existing data", request);
-    }
-
-    /** The optimistic lock fired: someone else changed the order first. Retryable. */
-    @ExceptionHandler(OptimisticLockingFailureException.class)
-    public ResponseEntity<ApiError> handleOptimisticLock(OptimisticLockingFailureException e,
-                                                         HttpServletRequest request) {
-        log.warn("Optimistic lock conflict on {} {}", request.getMethod(), request.getRequestURI());
-        return respond(ErrorCode.CONCURRENT_MODIFICATION,
-                "The order was modified concurrently; reload it and retry", request);
-    }
-
-    /**
-     * The backstop. Anything reaching here is a bug in this service.
+     * The backstop. Anything reaching here is a bug in the service.
      *
      * <p>The response carries no exception detail at all - only the trace id. An internal
-     * error message tells a caller about class names, SQL fragments and file paths, and the
+     * error message tells a caller about class names, SQL fragments and file paths, and a
      * legitimate caller can do nothing with any of it. The trace id is the handle: it is in
      * the response, in the log line, and on the span.
      */
@@ -165,13 +140,13 @@ public class GlobalExceptionHandler {
                 "An internal error occurred. Quote the traceId when reporting it.", request);
     }
 
-    private ResponseEntity<ApiError> respond(ErrorCode code, String message,
-                                             HttpServletRequest request) {
+    static ResponseEntity<ApiError> respond(ErrorCode code, String message,
+                                            HttpServletRequest request) {
         return ResponseEntity.status(code.httpStatus())
                 .body(ApiError.of(code, message, request.getRequestURI(), traceId()));
     }
 
-    private static String traceId() {
-        return MDC.get("traceId");
+    static String traceId() {
+        return MDC.get(TraceIdFilter.MDC_KEY);
     }
 }

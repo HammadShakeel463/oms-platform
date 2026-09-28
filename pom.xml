@@ -14,8 +14,10 @@
 
     <modules>
         <module>oms-common</module>
+        <module>oms-web</module>
         <module>order-service</module>
         <module>matching-engine</module>
+        <module>matching-bench</module>
         <module>market-data-service</module>
         <module>position-service</module>
         <module>api-gateway</module>
@@ -76,6 +78,11 @@
             <dependency>
                 <groupId>com.oms</groupId>
                 <artifactId>oms-common</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.oms</groupId>
+                <artifactId>oms-web</artifactId>
                 <version>${project.version}</version>
             </dependency>
 

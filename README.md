@@ -5,8 +5,9 @@ audit trail, a price-time priority matching engine, a simulated market data feed
 P&L tracking, and pre-trade risk — built as five Spring Boot microservices over Kafka,
 PostgreSQL and Redis.
 
-> **Build status:** Phase 2 of 7 complete. order-service is feature-complete end to end.
-> `./mvnw test` is green: 73 tests. See [Roadmap](#roadmap).
+> **Build status:** Phase 3 of 7 complete. order-service and matching-engine are both
+> feature-complete, with a JMH-measured tuning pass on the book.
+> `./mvnw test` is green: 203 tests. See [Roadmap](#roadmap).
 
 ## Why this project exists
 
@@ -52,6 +53,12 @@ Read in this order:
    commands that matter.
 7. **[docs/order-service.md](docs/order-service.md)** — the first service in full: API, error
    contract, schema, order flow, risk suite, configuration and the test pyramid.
+8. **[docs/matching-engine.md](docs/matching-engine.md)** — the order book: data structure, matching
+   algorithm, allocation discipline, recovery.
+9. **[docs/concurrency.md](docs/concurrency.md)** — the threading design, in Java Memory Model
+   terms, with the C++ mapping.
+10. **[docs/performance.md](docs/performance.md)** — the measure → fix → re-measure pass, with
+    before/after numbers and the reproduction command.
 
 ## Repository layout
 
@@ -61,6 +68,9 @@ oms-platform/
 ├── mvnw, mvnw.cmd, .mvn/      Maven wrapper — no local Maven install needed
 ├── oms-common/                shared CONTRACTS only: domain enums, Ticks, sealed DomainEvent
 │                              hierarchy, topic names, error contract. No JPA, no Spring Boot.
+├── oms-web/                   shared Spring web plumbing (ApiError advice, trace-id filter),
+│                              shipped as a Boot auto-configuration
+├── matching-bench/            JMH benchmarks for the order book. Not deployed.
 ├── order-service/       :8081 intake, validation, pre-trade risk, state machine, audit, outbox
 ├── matching-engine/     :8082 in-memory price-time priority order book
 ├── market-data-service/ :8083 tick simulator, Redis snapshots, streaming quotes
@@ -91,7 +101,7 @@ Running the full stack (`docker compose up`) arrives in Phase 6.
 
 ## Design decisions worth reading first
 
-If you only read three things:
+If you only read four things:
 
 - **Why every order-path topic is keyed by symbol.** It gives the matching engine
   one-writer-per-book without a single lock, and it stops a cancel from overtaking the order it
@@ -102,6 +112,10 @@ If you only read three things:
 - **Why at-least-once with idempotent consumers, not Kafka exactly-once.** EOS does not extend
   to the PostgreSQL write, which is where the money lands.
   [kafka-event-design.md §4](docs/kafka-event-design.md)
+- **Why the matching engine is single-writer instead of lock-free.** Concurrent mutation of one
+  book would destroy the price-time ordering the book exists to establish - the concurrency win
+  is a partitioning decision, not a clever lock.
+  [ADR 0005](docs/adr/0005-single-writer-per-book-not-a-lock-free-order-book.md)
 
 ## Roadmap
 
@@ -109,7 +123,7 @@ If you only read three things:
 |---|---|---|
 | 1 | Architecture, domain model, Kafka event design, Maven skeleton | ✅ Complete |
 | 2 | order-service end to end: JPA, Flyway, risk, state machine, outbox, tests | ✅ Complete |
-| 3 | matching-engine: order book, concurrency design, JMH harness, tuning pass | ⏳ |
+| 3 | matching-engine: order book, concurrency design, JMH harness, tuning pass | ✅ Complete |
 | 4 | market-data-service (backpressure) + position-service (P&L) | ⏳ |
 | 5 | api-gateway, Spring Security/JWT, OpenAPI | ⏳ |
 | 6 | Docker Compose, Kubernetes, GitHub Actions, observability stack | ⏳ |

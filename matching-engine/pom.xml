@@ -13,13 +13,19 @@
 
     <artifactId>matching-engine</artifactId>
     <name>matching-engine</name>
-    <description>In-memory price-time priority order book. Consumes accepted orders, emits fills. Stateless across restarts by design; the book is rebuilt from Kafka.</description>
+    <description>In-memory price-time priority order book. Consumes accepted orders, emits fills.
+        Holds no database: the book is rebuilt by replaying its Kafka partitions.</description>
 
     <dependencies>
         <dependency>
             <groupId>com.oms</groupId>
             <artifactId>oms-common</artifactId>
         </dependency>
+        <dependency>
+            <groupId>com.oms</groupId>
+            <artifactId>oms-web</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
@@ -28,6 +34,14 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka</artifactId>
+        </dependency>
+
+        <!-- Deliberately NO spring-boot-starter-data-jpa and no JDBC driver. The book is
+             in memory; giving this service a database would put I/O on the hot path and
+             invite someone to use it. -->
 
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -38,6 +52,32 @@
             <artifactId>micrometer-registry-prometheus</artifactId>
             <scope>runtime</scope>
         </dependency>
+
+        <!-- Test -->
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>kafka</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.tngtech.archunit</groupId>
+            <artifactId>archunit-junit5</artifactId>
+        </dependency>
     </dependencies>
 
     <build>
@@ -45,6 +85,13 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <!-- The Boot executable jar gets a classifier, so the plain
+                         matching-engine jar stays a normal library jar. Without this,
+                         repackage rewrites the main artifact into BOOT-INF/classes and
+                         matching-bench cannot see a single class in it. -->
+                    <classifier>app</classifier>
+                </configuration>
                 <executions>
                     <execution>
                         <goals><goal>repackage</goal></goals>

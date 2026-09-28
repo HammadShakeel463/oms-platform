@@ -1,0 +1,28 @@
+# Profile for the Testcontainers integration test. Kafka connection details come from
+# @ServiceConnection; only behaviour is set here.
+
+spring:
+  kafka:
+    consumer:
+      group-id: matching-engine-it
+      auto-offset-reset: earliest
+    listener:
+      missing-topics-fatal: false
+
+oms:
+  engine:
+    snapshot-depth: 10
+    dedupe-capacity: 4096
+    node-pool-limit: 1024
+    # One consumer thread in the test: deterministic, and the engine is single-writer per book
+    # anyway, so extra threads add nothing but interleaving to debug.
+    concurrency: 1
+    consumer-group: matching-engine-it
+    metrics-refresh-interval: 60000
+
+logging:
+  level:
+    org.testcontainers: WARN
+    com.github.dockerjava: WARN
+    org.apache.kafka: WARN
+    com.oms: DEBUG

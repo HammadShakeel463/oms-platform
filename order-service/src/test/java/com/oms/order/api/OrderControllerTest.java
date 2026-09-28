@@ -17,6 +17,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -54,6 +55,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * what a client integrates against.
  */
 @WebMvcTest(OrderController.class)
+// @WebMvcTest only applies a whitelist of auto-configurations, and a custom one from a
+// library jar is not on it. Importing it explicitly is what puts the shared ApiError advice
+// and the trace-id filter into the slice - and asserting the error contract is most of the
+// value of this test class.
+@Import(com.oms.web.OmsWebAutoConfiguration.class)
 class OrderControllerTest {
 
     @Autowired
