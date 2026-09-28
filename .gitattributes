@@ -1,0 +1,6 @@
+# Normalise to LF in the repository; mvnw MUST stay LF or it fails on Linux/CI.
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+mvnw text eol=lf
+*.jar binary
