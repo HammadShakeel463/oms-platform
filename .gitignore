@@ -10,3 +10,4 @@ out/
 *.jfr
 jmh-run.log
 .env
+dependency-reduced-pom.xml
