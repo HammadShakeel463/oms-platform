@@ -1,0 +1,59 @@
+%% Render with: https://mermaid.live  or the Mermaid CLI
+flowchart TB
+    client([Client / Postman / UI])
+
+    subgraph edge["Edge"]
+        gw["api-gateway :8080<br/>Spring Cloud Gateway<br/>routing · JWT · rate limit"]
+    end
+
+    subgraph services["Services"]
+        os["order-service :8081<br/>intake · validation · risk<br/>state machine · audit"]
+        me["matching-engine :8082<br/>in-memory price-time book"]
+        mds["market-data-service :8083<br/>tick simulator · snapshots"]
+        ps["position-service :8084<br/>positions · realised/unrealised P&L"]
+    end
+
+    subgraph infra["Infrastructure"]
+        pg[("PostgreSQL<br/>oms_order · oms_marketdata · oms_position")]
+        redis[("Redis<br/>reference data · quote snapshots")]
+        kafka{{"Kafka"}}
+    end
+
+    subgraph obs["Observability"]
+        prom["Prometheus"]
+        graf["Grafana"]
+        tempo["Tempo / OTLP traces"]
+    end
+
+    client -->|HTTPS + JWT| gw
+    gw --> os
+    gw --> mds
+    gw --> ps
+    gw --> me
+
+    os -->|REST: instrument lookup| mds
+    os -.->|cache| redis
+    mds -.->|snapshot cache| redis
+
+    os -->|orders.accepted<br/>orders.cancel-requests| kafka
+    kafka -->|orders.accepted| me
+    me -->|trades.executed<br/>execution-reports| kafka
+    kafka -->|trades.executed| os
+    kafka -->|trades.executed| ps
+    kafka -->|trades.executed| mds
+    kafka -->|marketdata.ticks| ps
+    mds -->|marketdata.ticks| kafka
+    os -->|orders.lifecycle| kafka
+
+    os --- pg
+    mds --- pg
+    ps --- pg
+
+    os -.->|metrics| prom
+    me -.->|metrics| prom
+    mds -.->|metrics| prom
+    ps -.->|metrics| prom
+    gw -.->|metrics| prom
+    prom --> graf
+    os -.->|traces| tempo
+    me -.->|traces| tempo

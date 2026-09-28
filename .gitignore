@@ -1,0 +1,12 @@
+target/
+!.mvn/wrapper/maven-wrapper.jar
+.idea/
+*.iml
+*.log
+.DS_Store
+build/
+out/
+*.hprof
+*.jfr
+jmh-result.*
+.env

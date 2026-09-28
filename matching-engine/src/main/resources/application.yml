@@ -1,0 +1,26 @@
+spring:
+  application:
+    name: matching-engine
+
+server:
+  port: 8082
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true     # /actuator/health/liveness and /readiness for Kubernetes
+      show-details: when_authorized
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+logging:
+  level:
+    root: INFO
+    com.oms: DEBUG
