@@ -4,30 +4,31 @@ What to point at when a job description lists a technology. Kept current as each
 
 | JD requirement | Where it lives | Phase | Status |
 |---|---|---|---|
-| Java 17 | `maven.compiler.release=17`; records, sealed interfaces, pattern matching, `EnumMap`/`EnumSet` | 1 | ✅ |
-| — records | every event, `ApiError`, `InstrumentView`, `QuoteSnapshot` | 1 | ✅ |
-| — sealed interfaces | `DomainEvent` | 1 | ✅ |
-| — pattern matching | `instanceof` patterns; switch patterns over sealed `DomainEvent` in Phase 4 | 2, 4 | ✅ partial |
-| — virtual threads | `vthreads` profile on order-service; streaming endpoint | 2, 4 | ✅ profile |
+| Java 17 (targeting **21**) | `maven.compiler.release=21`; 21 is a superset of 17, and the brief asks for two Java 21 features — see [ADR 0006](adr/0006-target-java-21-not-17.md) | 1, 4 | ✅ |
+| — records *(Java 16)* | every event, `ApiError`, `InstrumentView`, `QuoteSnapshot`, commands, all DTOs | 1–4 | ✅ |
+| — sealed interfaces *(Java 17)* | `DomainEvent` over 6 event records | 1 | ✅ |
+| — pattern matching for `instanceof` *(Java 16)* | entity and composite-key equality | 2 | ✅ |
+| — pattern matching for `switch` *(Java **21**, preview in 17)* | `PositionEventListener.apply` — exhaustive over sealed `DomainEvent`, no `default` branch | 4 | ✅ |
+| — virtual threads *(Java **21**)* | market-data streaming subscribers, via an injected `AsyncTaskExecutor`; `vthreads` profile on order-service | 2, 4 | ✅ |
 | Maven multi-module | parent POM + 8 modules, BOM-managed versions, a Boot auto-configuration library | 1, 3 | ✅ |
 | Spring Boot 3.x | Boot 3.5.16, all five services | 1 | ✅ |
-| — Spring Web | `OrderController` + 3 more to come | 2–4 | ✅ order |
-| — Spring Data JPA + Hibernate | 6 entities, 6 repositories, derived + JPQL + native SQL | 2, 4 | ✅ order |
+| — Spring Web | 4 services: orders, book depth, instruments/quotes/SSE, positions/P&L | 2–4 | ✅ |
+| — Spring Data JPA + Hibernate | 9 entities, 10 repositories, derived + JPQL + native SQL | 2, 4 | ✅ |
 | — Bean Validation | `PlaceOrderRequest`, `@Validated` params, `@ConfigurationProperties` | 2 | ✅ |
 | — Spring Security + JWT | gateway filter + per-service resource-server config | 5 | ⏳ |
 | — Actuator | all five services, liveness/readiness probes | 1 | ✅ |
 | Spring Cloud Gateway | `api-gateway` | 5 | ⏳ (skeleton up) |
-| Flyway migrations | `V1__order_schema.sql`, `V2__seed_accounts.sql` | 2, 4 | ✅ order |
-| PostgreSQL, schema per service | `oms_order` live: 7 tables, trigger, partial indexes | 2, 4 | ✅ order |
-| Apache Kafka | producer + 2 listeners + DLT error handler wired | 1, 2–4 | ✅ order |
-| Redis | `@Cacheable` instrument cache, JSON serialisation, 5-min TTL | 2, 4 | ✅ order |
+| Flyway migrations | 3 schemas, 5 migrations, seeded reference data | 2, 4 | ✅ |
+| PostgreSQL, schema per service | `oms_order` (7 tables), `oms_marketdata` (1), `oms_position` (2); 2 append-only triggers, partial indexes, CHECK constraints | 2, 4 | ✅ |
+| Apache Kafka | 6 topics, 4 producers, 7 listeners (record + batch), per-consumer retry policies, DLT on all | 1, 2–4 | ✅ |
+| Redis | `@Cacheable` reference data in two services + write-through quote snapshots with a safety TTL | 2, 4 | ✅ |
 | OpenAPI / Swagger | springdoc on each service, aggregated at the gateway | 5 | ⏳ |
 | Role-based access | `ROLE_TRADER` / `ROLE_RISK` / `ROLE_ADMIN` | 5 | ⏳ |
 | JUnit 5 | every module; Surefire wired | 1 | ✅ |
-| Mockito | `OrderServiceTest`, `TradeApplicationServiceTest`, `@MockitoBean` | 2 | ✅ |
-| Testcontainers | `OrderPersistenceIT`, `OrderFlowIT`, `MatchingEngineFlowIT` | 2–4 | ✅ written |
+| Mockito | service-layer tests in order-service and position-service, `@MockitoBean` in 2 slice tests | 2, 4 | ✅ |
+| Testcontainers | 5 ITs across 4 services — Postgres, Kafka, Redis | 2–4 | ✅ written |
 | Coverage > 70% | JaCoCo `coverage-gate` profile, enforced in CI | 1 (wired) 6 (gated) | ✅ wired |
-| Global exception handling | `GlobalExceptionHandler`: 9 handlers, one contract | 1, 2 | ✅ |
+| Global exception handling | `oms-web`: a Boot auto-configuration shared by all 4 web services, 9 handlers, one contract | 1–4 | ✅ |
 | Docker / docker-compose | one-command full stack | 6 | ⏳ |
 | Kubernetes manifests | Deployment, Service, ConfigMap, Secret per service | 6 | ⏳ |
 | GitHub Actions CI/CD | build, test, coverage gate, image publish | 6 | ⏳ |
@@ -49,6 +50,6 @@ capital-markets employer will actually want to talk about.
 | Immutable audit trail as source of truth; order row is a derived cache | `order_audit` + append-only trigger | 2 ✅ |
 | Transactional outbox — no dual write to Kafka, `FOR UPDATE SKIP LOCKED` | ADR 0004 | 2 ✅ |
 | Pre-trade risk suite: 6 ordered checks, worst-case position exposure | `order-service` risk package | 2 ✅ |
-| Average-cost realised P&L, mark-to-market unrealised | `position-service` | 4 |
-| Backpressure on the market-data stream, with conflation | `market-data-service` | 4 |
-| Idempotent consumers, and the reasoning for at-least-once over EOS | `docs/kafka-event-design.md` §4 | 2–4 |
+| Average-cost realised P&L, mark-to-market unrealised, exact-cost basis | `position-service` | 4 ✅ |
+| Backpressure on the market-data stream, with conflation and a published sequence | `market-data-service` | 4 ✅ |
+| Idempotent consumers, and the reasoning for at-least-once over EOS | `docs/kafka-event-design.md` §4 | 2–4 ✅ |

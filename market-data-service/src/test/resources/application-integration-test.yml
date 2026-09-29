@@ -1,0 +1,36 @@
+# Testcontainers profile. Connection details come from @ServiceConnection.
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  kafka:
+    consumer:
+      auto-offset-reset: earliest
+    listener:
+      missing-topics-fatal: false
+  threads:
+    virtual:
+      # OFF in tests, deliberately. The delivery loop is identical either way (it depends on
+      # AsyncTaskExecutor, not on a thread factory), and platform threads give readable stack
+      # traces and deterministic scheduling when a streaming assertion fails.
+      enabled: false
+
+oms:
+  marketdata:
+    simulator-enabled: true
+    # Fast, so a test does not wait a second to see a second tick.
+    tick-interval: 50
+    spread-ticks: 2
+    max-step-ticks: 3
+    base-size: 100
+    quote-cache-ttl: 30s
+    stream-timeout: 20s
+    stream-heartbeat: 2s
+    trade-consumer-group: marketdata-prints-it
+
+logging:
+  level:
+    org.testcontainers: WARN
+    com.github.dockerjava: WARN
+    org.apache.kafka: WARN
+    com.oms: DEBUG

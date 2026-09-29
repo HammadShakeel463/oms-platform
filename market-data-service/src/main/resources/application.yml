@@ -2,6 +2,73 @@ spring:
   application:
     name: market-data-service
 
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:oms}
+    username: ${DB_USER:oms_marketdata}
+    password: ${DB_PASSWORD:oms_marketdata}
+    hikari:
+      # Smaller than order-service: this service reads a handful of reference rows on a
+      # schedule. The quote path does not touch the database at all.
+      maximum-pool-size: 6
+      minimum-idle: 2
+      connection-timeout: 3000
+      pool-name: market-data-pool
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: oms_marketdata
+        jdbc:
+          time_zone: UTC
+    show-sql: false
+
+  flyway:
+    enabled: true
+    schemas: oms_marketdata
+    default-schema: oms_marketdata
+    create-schemas: true
+    locations: classpath:db/migration
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 1s
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    consumer:
+      group-id: marketdata-prints
+      auto-offset-reset: latest
+      enable-auto-commit: false
+    listener:
+      ack-mode: record
+      missing-topics-fatal: false
+
+  threads:
+    virtual:
+      # ON for this service, unlike order-service.
+      #
+      # Every streaming subscriber needs a thread parked on its mailbox. On platform threads
+      # that caps subscribers at the pool size and costs ~1MB of stack each; on virtual
+      # threads a parked subscriber costs a few hundred bytes of heap.
+      #
+      # QuoteStreamController injects an AsyncTaskExecutor rather than creating a virtual-
+      # thread executor itself, so this flag is the only switch: turn it off and the same
+      # code runs on a platform-thread pool. Useful for a deterministic test, and for
+      # turning the feature off in production without a rebuild.
+      enabled: true
+
+  mvc:
+    async:
+      # Longer than the stream timeout below, so the server-side deadline in the delivery
+      # loop is what ends a stream rather than Spring's async timeout firing first and
+      # producing a less informative close.
+      request-timeout: 2100000
+
 server:
   port: 8083
   shutdown: graceful
@@ -14,13 +81,30 @@ management:
   endpoint:
     health:
       probes:
-        enabled: true     # /actuator/health/liveness and /readiness for Kubernetes
+        enabled: true
       show-details: when_authorized
+      group:
+        readiness:
+          include: db, ping
   metrics:
     tags:
       application: ${spring.application.name}
+
+oms:
+  marketdata:
+    simulator-enabled: ${SIMULATOR_ENABLED:true}
+    tick-interval: 100          # ms between generation passes (fixed delay)
+    spread-ticks: 2             # quoted spread, in instrument ticks
+    max-step-ticks: 3           # largest single move of the mid, in instrument ticks
+    base-size: 100
+    quote-cache-ttl: 30s        # after this, "no quote" rather than a stale price
+    stream-timeout: 30m         # server closes the stream; clients reconnect
+    stream-heartbeat: 15s       # keeps intermediate proxies from timing out an idle stream
+    trade-consumer-group: marketdata-prints
 
 logging:
   level:
     root: INFO
     com.oms: DEBUG
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{traceId:-}] %logger{36} - %msg%n"

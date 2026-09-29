@@ -1,22 +1,27 @@
-# Enable with: --spring.profiles.active=vthreads   (requires a Java 21+ runtime)
+# Enable with: --spring.profiles.active=vthreads
 #
-# What this changes: Tomcat stops using a bounded pool of ~200 platform threads and runs
-# each request on a virtual thread instead. For a service like this one - blocking JDBC,
-# blocking HTTP to market-data-service, almost no CPU work - that removes the thread pool
-# as a concurrency ceiling. Under a slow downstream dependency the old failure mode is the
-# request pool filling up and everything queueing behind it; a virtual thread parked on a
-# blocking call costs a few hundred bytes of heap, so that ceiling moves by orders of
-# magnitude.
+# The platform targets Java 21 (ADR 0006), so virtual threads are available everywhere. They
+# are nonetheless OFF by default in order-service, and that is the interesting part.
 #
-# What it does NOT change: the JDBC connection pool. Ten connections is still ten
-# connections, and if anything virtual threads make it easier to pile 10,000 requests onto
-# that pool. The bottleneck moves; it does not disappear. This is exactly the lesson from
-# tuning thread-per-connection C++ servers - raising the concurrency limit only helps until
-# you hit the next resource, and the next resource here is the database.
+# What they would change: Tomcat stops using a bounded pool of ~200 platform threads and runs
+# each request on a virtual thread. For a service doing blocking JDBC and a blocking HTTP call
+# to market-data-service, that removes the request pool as a concurrency ceiling. Under a slow
+# downstream dependency the old failure mode is the pool filling up and everything queueing
+# behind it; a virtual thread parked on a blocking call costs a few hundred bytes of heap.
+#
+# Why they are off anyway: THE CEILING THAT BINDS HERE IS THE JDBC CONNECTION POOL, not the
+# request pool. Ten connections is still ten connections, and virtual threads make it easier to
+# pile ten thousand requests onto them - so the queue moves from the request pool to the
+# connection pool, where it is less visible and where a timeout is harder to tune. Raising a
+# concurrency limit only helps until you reach the next resource, and here the next resource is
+# one hop away. Exactly the lesson from tuning thread-per-connection C++ servers.
+#
+# market-data-service DOES enable them, because its constraint is genuinely different: it holds
+# one long-lived parked thread per streaming subscriber, and nothing behind it is pooled.
 #
 # Caveat worth knowing: code that synchronizes on a monitor around a blocking call pins the
-# carrier thread in JDK 21 (fixed in 24+). Virtual threads reward code that blocks on I/O
-# and punishes code that blocks on locks.
+# carrier thread on JDK 21 (fixed in 24+). Virtual threads reward code that blocks on I/O and
+# punish code that blocks on locks.
 spring:
   threads:
     virtual:

@@ -11,3 +11,4 @@ the old one.
 | [0003](0003-json-events-without-a-schema-registry.md) | JSON event payloads, no Schema Registry, versioned topic names | Accepted | 1 |
 | [0004](0004-transactional-outbox-instead-of-dual-write.md) | Transactional outbox instead of a dual write to Kafka | Accepted | 2 |
 | [0005](0005-single-writer-per-book-not-a-lock-free-order-book.md) | Single-writer-per-book via Kafka partitioning, not a lock-free order book | Accepted | 3 |
+| [0006](0006-target-java-21-not-17.md) | Target Java 21, not Java 17 (the brief asks for two Java 21 features) | Accepted | 4 |

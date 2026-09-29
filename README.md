@@ -5,9 +5,8 @@ audit trail, a price-time priority matching engine, a simulated market data feed
 P&L tracking, and pre-trade risk — built as five Spring Boot microservices over Kafka,
 PostgreSQL and Redis.
 
-> **Build status:** Phase 3 of 7 complete. order-service and matching-engine are both
-> feature-complete, with a JMH-measured tuning pass on the book.
-> `./mvnw test` is green: 203 tests. See [Roadmap](#roadmap).
+> **Build status:** Phase 4 of 7 complete. All four business services are feature-complete.
+> `./mvnw test` is green: 284 tests. See [Roadmap](#roadmap).
 
 ## Why this project exists
 
@@ -21,7 +20,7 @@ instead of an accident of configuration.
 
 | Layer | Technology |
 |---|---|
-| Language | Java 17 (records, sealed interfaces, pattern matching, virtual threads) |
+| Language | Java 21 LTS — records, sealed interfaces, exhaustive switch patterns, virtual threads ([ADR 0006](docs/adr/0006-target-java-21-not-17.md)) |
 | Framework | Spring Boot 3.5, Spring Cloud Gateway 2025.0 |
 | Persistence | PostgreSQL 16, Hibernate/JPA, Flyway — one schema per service |
 | Messaging | Apache Kafka (6 topics, versioned, documented) |
@@ -59,6 +58,10 @@ Read in this order:
    terms, with the C++ mapping.
 10. **[docs/performance.md](docs/performance.md)** — the measure → fix → re-measure pass, with
     before/after numbers and the reproduction command.
+11. **[docs/market-data-service.md](docs/market-data-service.md)** — the tick simulator, and the
+    backpressure design: why conflation is the only correct option for a quote stream.
+12. **[docs/position-service.md](docs/position-service.md)** — average-cost P&L, why the state is
+    exact cost rather than a rounded average, and the case implementations get wrong.
 
 ## Repository layout
 
@@ -84,7 +87,7 @@ oms-platform/
 
 ## Build
 
-Only a JDK 17 or newer is required — Maven bootstraps itself through the wrapper.
+Only a JDK 21 or newer is required — Maven bootstraps itself through the wrapper.
 
 ```bash
 ./mvnw verify
@@ -94,14 +97,15 @@ Only a JDK 17 or newer is required — Maven bootstraps itself through the wrapp
 ./mvnw verify -Pcoverage-gate
 ```
 
-On Windows use `mvnw.cmd`. The build is currently verified on JDK 25 compiling to release 17;
-the `--release 17` flag means the bytecode and the API surface are genuinely Java 17.
+On Windows use `mvnw.cmd`. The build is verified on JDK 25 compiling to `--release 21`. The brief asked for Java 17; 21 is a
+strict superset and is required by two features the brief also asks for - virtual threads and
+pattern matching for switch. See [ADR 0006](docs/adr/0006-target-java-21-not-17.md).
 
 Running the full stack (`docker compose up`) arrives in Phase 6.
 
 ## Design decisions worth reading first
 
-If you only read four things:
+If you only read six things:
 
 - **Why every order-path topic is keyed by symbol.** It gives the matching engine
   one-writer-per-book without a single lock, and it stops a cancel from overtaking the order it
@@ -116,6 +120,15 @@ If you only read four things:
   book would destroy the price-time ordering the book exists to establish - the concurrency win
   is a partitioning decision, not a clever lock.
   [ADR 0005](docs/adr/0005-single-writer-per-book-not-a-lock-free-order-book.md)
+- **Why the quote stream conflates instead of queueing.** An unbounded queue kills the process for
+  everyone because of one slow client; conflation bounds memory by the symbol universe and gives a
+  lagging subscriber the *freshest* price rather than a faithful replay of stale ones - and the
+  published sequence number means the client can see it happened.
+  [market-data-service.md](docs/market-data-service.md)
+- **Why a position stores exact open cost, not an average cost.** Recomputing an average from a
+  rounded average compounds error; storing exact cost makes a full close balance to the last paisa,
+  and a CHECK constraint fails the write if it ever does not.
+  [position-service.md](docs/position-service.md)
 
 ## Roadmap
 
@@ -124,7 +137,7 @@ If you only read four things:
 | 1 | Architecture, domain model, Kafka event design, Maven skeleton | ✅ Complete |
 | 2 | order-service end to end: JPA, Flyway, risk, state machine, outbox, tests | ✅ Complete |
 | 3 | matching-engine: order book, concurrency design, JMH harness, tuning pass | ✅ Complete |
-| 4 | market-data-service (backpressure) + position-service (P&L) | ⏳ |
+| 4 | market-data-service (backpressure) + position-service (P&L) | ✅ Complete |
 | 5 | api-gateway, Spring Security/JWT, OpenAPI | ⏳ |
 | 6 | Docker Compose, Kubernetes, GitHub Actions, observability stack | ⏳ |
 | 7 | Architecture diagram, benchmark write-up, interview talking points | ⏳ |

@@ -24,10 +24,12 @@
     </modules>
 
     <properties>
-        <!-- Language level is pinned to 17 (the level the JDs ask for) via <release>,
-             so the build stays correct even when the local JDK is newer. -->
-        <java.version>17</java.version>
-        <maven.compiler.release>17</maven.compiler.release>
+        <!-- Java 21 (LTS). The JDs ask for 17, and 21 is a strict superset: every 17
+             feature still applies. Two features on the same requirement list - virtual
+             threads and pattern matching for switch - are Java 21, so 17 cannot satisfy
+             the brief. Nothing newer than 21 is used. See ADR 0006. -->
+        <java.version>21</java.version>
+        <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
         <spring-boot.version>3.5.16</spring-boot.version>

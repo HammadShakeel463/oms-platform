@@ -2,6 +2,62 @@ spring:
   application:
     name: position-service
 
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:oms}
+    username: ${DB_USER:oms_position}
+    password: ${DB_PASSWORD:oms_position}
+    hikari:
+      # Sized for the trade consumer, which is the only writer: 3 listener threads, each
+      # holding one connection for the length of a short transaction. The read endpoints are
+      # low volume. More connections than the database can keep busy add context switching
+      # and lock contention while throughput stays flat.
+      maximum-pool-size: 8
+      minimum-idle: 2
+      connection-timeout: 3000
+      pool-name: position-service-pool
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: oms_position
+        jdbc:
+          time_zone: UTC
+        order_inserts: true
+        order_updates: true
+    show-sql: false
+
+  flyway:
+    enabled: true
+    schemas: oms_position
+    default-schema: oms_position
+    create-schemas: true
+    locations: classpath:db/migration
+
+  # No Redis. Mark prices are in-memory and rebuilt from the tick stream within one
+  # generation interval, so a cache would add a network hop to protect data with a
+  # 100-millisecond lifetime. See MarkPriceCache.
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    consumer:
+      # Group ids are set per listener factory, because the two consumers deliberately use
+      # different groups and different offset-reset policies. This value is only a fallback.
+      group-id: position-service-trades
+      enable-auto-commit: false
+    listener:
+      missing-topics-fatal: false
+
+  threads:
+    virtual:
+      # Off here, unlike market-data-service. This service has no long-lived connections to
+      # park - its work is short JDBC transactions on Kafka listener threads, and virtual
+      # threads would move the bottleneck onto the connection pool without raising any
+      # ceiling that is currently binding.
+      enabled: false
+
 server:
   port: 8084
   shutdown: graceful
@@ -14,13 +70,25 @@ management:
   endpoint:
     health:
       probes:
-        enabled: true     # /actuator/health/liveness and /readiness for Kubernetes
+        enabled: true
       show-details: when_authorized
+      group:
+        readiness:
+          include: db, ping
   metrics:
     tags:
       application: ${spring.application.name}
+
+oms:
+  position:
+    # Separate groups, so trades and ticks have independent offsets and neither can delay
+    # the other. The tick consumer is the one allowed to fall behind.
+    trade-consumer-group: position-service-trades
+    tick-consumer-group: position-service-marks
 
 logging:
   level:
     root: INFO
     com.oms: DEBUG
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{traceId:-}] %logger{36} - %msg%n"
