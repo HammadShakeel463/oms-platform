@@ -15,17 +15,17 @@ What to point at when a job description lists a technology. Kept current as each
 | — Spring Web | 4 services: orders, book depth, instruments/quotes/SSE, positions/P&L | 2–4 | ✅ |
 | — Spring Data JPA + Hibernate | 9 entities, 10 repositories, derived + JPQL + native SQL | 2, 4 | ✅ |
 | — Bean Validation | `PlaceOrderRequest`, `@Validated` params, `@ConfigurationProperties` | 2 | ✅ |
-| — Spring Security + JWT | gateway filter + per-service resource-server config | 5 | ⏳ |
+| — Spring Security + JWT | RS256 issuer + JWKS at the gateway; all 4 services are resource servers that re-validate ([ADR 0007](adr/0007-asymmetric-jwt-verified-at-every-service.md)) | 5 | ✅ |
 | — Actuator | all five services, liveness/readiness probes | 1 | ✅ |
-| Spring Cloud Gateway | `api-gateway` | 5 | ⏳ (skeleton up) |
+| Spring Cloud Gateway | 8 routes, per-account Redis rate limiting, circuit breaker + fallback, aggregated docs | 5 | ✅ |
 | Flyway migrations | 3 schemas, 5 migrations, seeded reference data | 2, 4 | ✅ |
 | PostgreSQL, schema per service | `oms_order` (7 tables), `oms_marketdata` (1), `oms_position` (2); 2 append-only triggers, partial indexes, CHECK constraints | 2, 4 | ✅ |
 | Apache Kafka | 6 topics, 4 producers, 7 listeners (record + batch), per-consumer retry policies, DLT on all | 1, 2–4 | ✅ |
 | Redis | `@Cacheable` reference data in two services + write-through quote snapshots with a safety TTL | 2, 4 | ✅ |
-| OpenAPI / Swagger | springdoc on each service, aggregated at the gateway | 5 | ⏳ |
-| Role-based access | `ROLE_TRADER` / `ROLE_RISK` / `ROLE_ADMIN` | 5 | ⏳ |
+| OpenAPI / Swagger | springdoc on all 5, bearer scheme declared, one Swagger UI aggregating 5 documents | 5 | ✅ |
+| Role-based access | `TRADER` / `RISK` / `ADMIN`, enforced at the gateway AND per service; RISK is read-only by design | 5 | ✅ |
 | JUnit 5 | every module; Surefire wired | 1 | ✅ |
-| Mockito | service-layer tests in order-service and position-service, `@MockitoBean` in 2 slice tests | 2, 4 | ✅ |
+| Mockito | service-layer tests in 2 services, `@MockitoBean` in 2 slice tests | 2, 4 | ✅ |
 | Testcontainers | 5 ITs across 4 services — Postgres, Kafka, Redis | 2–4 | ✅ written |
 | Coverage > 70% | JaCoCo `coverage-gate` profile, enforced in CI | 1 (wired) 6 (gated) | ✅ wired |
 | Global exception handling | `oms-web`: a Boot auto-configuration shared by all 4 web services, 9 handlers, one contract | 1–4 | ✅ |
@@ -53,3 +53,5 @@ capital-markets employer will actually want to talk about.
 | Average-cost realised P&L, mark-to-market unrealised, exact-cost basis | `position-service` | 4 ✅ |
 | Backpressure on the market-data stream, with conflation and a published sequence | `market-data-service` | 4 ✅ |
 | Idempotent consumers, and the reasoning for at-least-once over EOS | `docs/kafka-event-design.md` §4 | 2–4 ✅ |
+| Defence-in-depth auth: the account comes from a signed claim, never a header | ADR 0007 + `docs/security.md` | 5 ✅ |
+| Separation of duties in the role model: RISK can read everything and trade nothing | `docs/security.md` §4 | 5 ✅ |

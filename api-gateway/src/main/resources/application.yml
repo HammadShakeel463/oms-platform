@@ -2,19 +2,179 @@ spring:
   application:
     name: api-gateway
 
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 1s
+
+  cloud:
+    gateway:
+      server:
+        webflux:
+          # Fail fast on a misconfigured route rather than starting and 404-ing at runtime.
+          fail-on-route-definition-error: true
+
+          default-filters:
+            # Every response carries the trace id, so a support ticket maps to a log search.
+            - AddResponseHeader=X-Gateway, oms-api-gateway
+
+          routes:
+            # --------------------------------------------------------------------------
+            #  order-service
+            #
+            #  The tightest rate limit in the platform. An order is a write that reaches
+            #  PostgreSQL and Kafka, and a runaway client here does real damage - unlike a
+            #  runaway reader, which only wastes CPU.
+            # --------------------------------------------------------------------------
+            - id: order-service
+              uri: ${ORDER_SERVICE_URL:http://localhost:8081}
+              predicates:
+                - Path=/api/v1/orders/**
+              filters:
+                - name: RequestRateLimiter
+                  args:
+                    key-resolver: "#{@accountKeyResolver}"
+                    redis-rate-limiter.replenishRate: 20     # sustained orders/second per account
+                    redis-rate-limiter.burstCapacity: 40     # short bursts are normal trading
+                    redis-rate-limiter.requestedTokens: 1
+                - name: CircuitBreaker
+                  args:
+                    name: orderService
+                    fallbackUri: forward:/fallback/order-service
+
+            # --------------------------------------------------------------------------
+            #  position-service
+            # --------------------------------------------------------------------------
+            - id: position-service
+              uri: ${POSITION_SERVICE_URL:http://localhost:8084}
+              predicates:
+                - Path=/api/v1/positions/**,/api/v1/pnl
+              filters:
+                - name: RequestRateLimiter
+                  args:
+                    key-resolver: "#{@accountKeyResolver}"
+                    redis-rate-limiter.replenishRate: 50
+                    redis-rate-limiter.burstCapacity: 100
+
+            # --------------------------------------------------------------------------
+            #  market-data-service
+            #
+            #  Reference data and snapshots. Generous limits: these are cheap reads served
+            #  from Redis, and a UI polling quotes is normal rather than abusive.
+            # --------------------------------------------------------------------------
+            - id: market-data-service
+              uri: ${MARKET_DATA_URL:http://localhost:8083}
+              predicates:
+                - Path=/api/v1/instruments/**,/api/v1/quotes/**
+              filters:
+                - name: RequestRateLimiter
+                  args:
+                    key-resolver: "#{@accountKeyResolver}"
+                    redis-rate-limiter.replenishRate: 100
+                    redis-rate-limiter.burstCapacity: 200
+
+            # --------------------------------------------------------------------------
+            #  matching-engine - book depth, operators only (enforced in SecurityConfig)
+            # --------------------------------------------------------------------------
+            - id: matching-engine
+              uri: ${MATCHING_ENGINE_URL:http://localhost:8082}
+              predicates:
+                - Path=/api/v1/books/**
+              filters:
+                - name: RequestRateLimiter
+                  args:
+                    key-resolver: "#{@accountKeyResolver}"
+                    redis-rate-limiter.replenishRate: 20
+                    redis-rate-limiter.burstCapacity: 40
+
+            # --------------------------------------------------------------------------
+            #  Aggregated API docs: each service serves its own, the UI collects them.
+            # --------------------------------------------------------------------------
+            - id: order-service-docs
+              uri: ${ORDER_SERVICE_URL:http://localhost:8081}
+              predicates:
+                - Path=/docs/order-service/v3/api-docs
+              filters:
+                - SetPath=/v3/api-docs
+            - id: market-data-docs
+              uri: ${MARKET_DATA_URL:http://localhost:8083}
+              predicates:
+                - Path=/docs/market-data-service/v3/api-docs
+              filters:
+                - SetPath=/v3/api-docs
+            - id: position-docs
+              uri: ${POSITION_SERVICE_URL:http://localhost:8084}
+              predicates:
+                - Path=/docs/position-service/v3/api-docs
+              filters:
+                - SetPath=/v3/api-docs
+            - id: matching-engine-docs
+              uri: ${MATCHING_ENGINE_URL:http://localhost:8082}
+              predicates:
+                - Path=/docs/matching-engine/v3/api-docs
+              filters:
+                - SetPath=/v3/api-docs
+
+  # The gateway is WebFlux and therefore already non-blocking; virtual threads would add
+  # nothing. Netty event-loop threads are the opposite of the thing virtual threads fix -
+  # they must never block, so there is nothing to park.
+  threads:
+    virtual:
+      enabled: false
+
 server:
   port: 8080
   shutdown: graceful
+  # Trust exactly one proxy hop for X-Forwarded-For. Trusting the header blindly would let a
+  # client rotate its own rate-limit key by forging it; trusting none would rate-limit the
+  # whole internet as one load-balancer address.
+  forward-headers-strategy: framework
+
+oms:
+  auth:
+    # Short, because a stateless JWT cannot be revoked: the expiry IS the revocation window.
+    token-ttl: 15m
+    # users: [] -> demo users are created at startup with a loud warning. Populate this in any
+    # environment that is not a laptop.
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    # One dropdown, four documents, each generated by the service that owns those endpoints -
+    # so a controller change updates its own docs and nobody maintains a spec that drifts.
+    urls:
+      - name: gateway (auth)
+        url: /v3/api-docs
+      - name: order-service
+        url: /docs/order-service/v3/api-docs
+      - name: market-data-service
+        url: /docs/market-data-service/v3/api-docs
+      - name: position-service
+        url: /docs/position-service/v3/api-docs
+      - name: matching-engine
+        url: /docs/matching-engine/v3/api-docs
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      orderService:
+        slidingWindowSize: 20
+        failureRateThreshold: 60
+        waitDurationInOpenState: 10s
+        permittedNumberOfCallsInHalfOpenState: 4
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus,metrics
+        include: health,info,prometheus,metrics,gateway
   endpoint:
     health:
       probes:
-        enabled: true     # /actuator/health/liveness and /readiness for Kubernetes
+        enabled: true
       show-details: when_authorized
   metrics:
     tags:
@@ -24,3 +184,6 @@ logging:
   level:
     root: INFO
     com.oms: DEBUG
+    org.springframework.cloud.gateway: INFO
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{traceId:-}] %logger{36} - %msg%n"

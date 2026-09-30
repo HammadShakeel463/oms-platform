@@ -5,8 +5,8 @@ audit trail, a price-time priority matching engine, a simulated market data feed
 P&L tracking, and pre-trade risk — built as five Spring Boot microservices over Kafka,
 PostgreSQL and Redis.
 
-> **Build status:** Phase 4 of 7 complete. All four business services are feature-complete.
-> `./mvnw test` is green: 284 tests. See [Roadmap](#roadmap).
+> **Build status:** Phase 5 of 7 complete. All five services are feature-complete and secured.
+> `./mvnw test` is green: 330 tests. See [Roadmap](#roadmap).
 
 ## Why this project exists
 
@@ -25,7 +25,7 @@ instead of an accident of configuration.
 | Persistence | PostgreSQL 16, Hibernate/JPA, Flyway — one schema per service |
 | Messaging | Apache Kafka (6 topics, versioned, documented) |
 | Cache | Redis 7 |
-| Security | Spring Security, JWT, role-based access |
+| Security | Spring Security, RS256 JWT with JWKS, role-based access, per-account rate limiting |
 | API docs | OpenAPI 3 / springdoc |
 | Build | Maven multi-module (wrapper committed — a JDK is the only prerequisite) |
 | Test | JUnit 5, Mockito, AssertJ, Testcontainers, JMH, ArchUnit |
@@ -62,6 +62,8 @@ Read in this order:
     backpressure design: why conflation is the only correct option for a quote stream.
 12. **[docs/position-service.md](docs/position-service.md)** — average-cost P&L, why the state is
     exact cost rather than a rounded average, and the case implementations get wrong.
+13. **[docs/security.md](docs/security.md)** — the authorisation matrix, why every service validates
+    the token independently, and what is deliberately not covered.
 
 ## Repository layout
 
@@ -105,7 +107,7 @@ Running the full stack (`docker compose up`) arrives in Phase 6.
 
 ## Design decisions worth reading first
 
-If you only read six things:
+If you only read seven things:
 
 - **Why every order-path topic is keyed by symbol.** It gives the matching engine
   one-writer-per-book without a single lock, and it stops a cancel from overtaking the order it
@@ -129,6 +131,10 @@ If you only read six things:
   rounded average compounds error; storing exact cost makes a full close balance to the last paisa,
   and a CHECK constraint fails the write if it ever does not.
   [position-service.md](docs/position-service.md)
+- **Why every service re-validates the JWT instead of trusting a gateway header.** Trusting the
+  header means one network misconfiguration - a debug port, a stray `port-forward` - is a total
+  authorisation bypass. The security boundary has to be the service, not the topology.
+  [ADR 0007](docs/adr/0007-asymmetric-jwt-verified-at-every-service.md)
 
 ## Roadmap
 
@@ -138,6 +144,6 @@ If you only read six things:
 | 2 | order-service end to end: JPA, Flyway, risk, state machine, outbox, tests | ✅ Complete |
 | 3 | matching-engine: order book, concurrency design, JMH harness, tuning pass | ✅ Complete |
 | 4 | market-data-service (backpressure) + position-service (P&L) | ✅ Complete |
-| 5 | api-gateway, Spring Security/JWT, OpenAPI | ⏳ |
+| 5 | api-gateway, Spring Security/JWT, OpenAPI | ✅ Complete |
 | 6 | Docker Compose, Kubernetes, GitHub Actions, observability stack | ⏳ |
 | 7 | Architecture diagram, benchmark write-up, interview talking points | ⏳ |

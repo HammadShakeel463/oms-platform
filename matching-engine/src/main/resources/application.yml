@@ -15,6 +15,15 @@ spring:
       ack-mode: batch
       missing-topics-fatal: false
 
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Fetched on first use and cached; re-fetched when an unknown key id appears.
+          # Key rotation is then a gateway-side operation rather than a redeploy of four
+          # services with new configuration.
+          jwk-set-uri: ${JWKS_URI:http://localhost:8080/oauth2/jwks}
+
 server:
   port: 8082
   shutdown: graceful

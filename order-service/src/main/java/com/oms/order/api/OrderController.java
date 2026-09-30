@@ -8,6 +8,9 @@ import com.oms.order.api.dto.PlaceOrderRequest;
 import com.oms.order.domain.OrderEntity;
 import com.oms.order.service.OrderService;
 import com.oms.order.service.PlaceOrderCommand;
+import com.oms.web.security.AccountId;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -20,7 +23,6 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -38,11 +40,15 @@ import java.util.UUID;
  * transaction, no repository. That is what makes the service testable without HTTP and the
  * controller testable without a database.
  *
- * <p><b>{@code X-Account-Id} is temporary.</b> Phase 5 replaces it with the account claim
- * from a verified JWT. It is called out here rather than left to be noticed: today this
- * header is client-supplied and therefore trivially spoofable, which is acceptable only
- * because nothing is authenticated yet. Reading it in one place - this class - is what will
- * make the swap a one-line change.
+ * <p><b>The account comes from a verified JWT claim</b>, resolved by {@code @AccountId}. Phases 2
+ * to 4 read an {@code X-Account-Id} header, which was client-supplied and therefore trivially
+ * spoofable - acceptable only because nothing was authenticated yet. Reading it in exactly one
+ * place made the swap a one-line change per endpoint, which was the point of putting it there.
+ *
+ * <p>{@code caller} is the JWT subject: <em>who</em> placed the order, as opposed to <em>whose
+ * account</em> it is for. It lands in the {@code actor} column of the audit trail, which is the
+ * difference between "ACC-TRADER-1 cancelled this" and "hammad cancelled this on behalf of
+ * ACC-TRADER-1".
  */
 @RestController
 @RequestMapping("/api/v1/orders")
@@ -65,8 +71,8 @@ public class OrderController {
      */
     @PostMapping
     public ResponseEntity<OrderResponse> placeOrder(
-            @RequestHeader("X-Account-Id") String accountId,
-            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            @AccountId String accountId,
+            @AuthenticationPrincipal Jwt caller,
             @Valid @RequestBody PlaceOrderRequest request,
             UriComponentsBuilder uriBuilder) {
 
@@ -79,7 +85,7 @@ public class OrderController {
                 request.timeInForce(),
                 request.limitPrice(),
                 request.quantity(),
-                userId));
+                callerId(caller)));
 
         URI location = uriBuilder.path("/api/v1/orders/{orderId}")
                 .buildAndExpand(order.getOrderId())
@@ -89,14 +95,14 @@ public class OrderController {
     }
 
     @GetMapping("/{orderId}")
-    public OrderResponse getOrder(@RequestHeader("X-Account-Id") String accountId,
+    public OrderResponse getOrder(@AccountId String accountId,
                                   @PathVariable UUID orderId) {
         return OrderResponse.from(orderService.findOrder(orderId, accountId));
     }
 
     @GetMapping
     public PageResponse<OrderResponse> listOrders(
-            @RequestHeader("X-Account-Id") String accountId,
+            @AccountId String accountId,
             @RequestParam(required = false) String symbol,
             @RequestParam(required = false) OrderStatus status,
             @RequestParam(defaultValue = "0") @Min(0) int page,
@@ -118,20 +124,27 @@ public class OrderController {
      */
     @DeleteMapping("/{orderId}")
     public ResponseEntity<OrderResponse> cancelOrder(
-            @RequestHeader("X-Account-Id") String accountId,
-            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            @AccountId String accountId,
+            @AuthenticationPrincipal Jwt caller,
             @PathVariable UUID orderId) {
 
-        OrderEntity order = orderService.requestCancel(orderId, accountId, userId);
+        OrderEntity order = orderService.requestCancel(orderId, accountId, callerId(caller));
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(OrderResponse.from(order));
     }
 
     /** The full immutable history of an order. */
     @GetMapping("/{orderId}/audit")
-    public List<OrderAuditResponse> auditTrail(@RequestHeader("X-Account-Id") String accountId,
+    public List<OrderAuditResponse> auditTrail(@AccountId String accountId,
                                                @PathVariable UUID orderId) {
         return orderService.auditTrail(orderId, accountId).stream()
                 .map(OrderAuditResponse::from)
                 .toList();
+    }
+    /**
+     * The JWT subject, for the audit trail. Null-safe because a service-to-service token may carry
+     * no subject, in which case the audit row falls back to the generic API actor.
+     */
+    private static String callerId(Jwt caller) {
+        return caller != null ? caller.getSubject() : null;
     }
 }

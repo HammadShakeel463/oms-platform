@@ -10,19 +10,28 @@ import com.oms.common.error.NotFoundException;
 import com.oms.common.error.RiskRejectedException;
 import com.oms.order.TestFixtures;
 import com.oms.order.api.dto.PlaceOrderRequest;
+import com.oms.order.config.SecurityConfig;
 import com.oms.order.domain.OrderEntity;
 import com.oms.order.service.OrderService;
 import com.oms.order.service.PlaceOrderCommand;
+import com.oms.web.security.OmsClaims;
+import com.oms.web.security.OmsRoles;
+import com.oms.web.security.OmsSecurityAutoConfiguration;
+import com.oms.web.OmsWebAutoConfiguration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -30,6 +39,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -38,28 +48,28 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Web-layer slice test.
+ * Web-layer slice test, now including the real security rules.
  *
- * <p>{@code @WebMvcTest} starts only the MVC infrastructure - controllers, converters,
- * filters and {@code @RestControllerAdvice} - with no database, no Kafka and no service
- * beans. It is a few hundred milliseconds rather than the several seconds a full
- * {@code @SpringBootTest} costs, and it fails for web reasons only, so a failure here is
- * always about HTTP.
+ * <p>{@code @WebMvcTest} starts only the MVC infrastructure - controllers, converters, filters and
+ * {@code @RestControllerAdvice} - with no database, no Kafka and no service beans.
  *
- * <p>{@code @MockitoBean} (Spring 6.2, replacing the deprecated {@code @MockBean}) puts a
- * Mockito mock into the slice's context in place of the real bean.
+ * <p>Three imports make this slice meaningful rather than a formality:
+ * {@link OmsWebAutoConfiguration} supplies the shared error advice and the trace filter,
+ * {@link OmsSecurityAutoConfiguration} supplies the roles converter and the {@code @AccountId}
+ * resolver, and {@link SecurityConfig} is the service's own filter chain - so the authorisation
+ * rules under test are the ones that actually ship. Custom auto-configurations from a library jar
+ * are not on the {@code @WebMvcTest} whitelist, which is why they are imported explicitly.
  *
- * <p>What is actually being tested: status codes, the {@code Location} header, JSON field
- * names, and - most valuable of all - that every failure comes back in the one error
- * contract. That last property is invisible in unit tests of the service and is exactly
- * what a client integrates against.
+ * <p>{@code jwt()} from {@code spring-security-test} installs a verified {@code Jwt} into the
+ * security context without signing or decoding anything. That is the right seam: signature
+ * verification is Spring Security's code and is tested by Spring Security. What is worth testing
+ * here is what happens <em>after</em> a token is accepted - which role reaches which endpoint, and
+ * whether the account actually comes from the claim.
  */
 @WebMvcTest(OrderController.class)
-// @WebMvcTest only applies a whitelist of auto-configurations, and a custom one from a
-// library jar is not on it. Importing it explicitly is what puts the shared ApiError advice
-// and the trace-id filter into the slice - and asserting the error contract is most of the
-// value of this test class.
-@Import(com.oms.web.OmsWebAutoConfiguration.class)
+@Import({OmsWebAutoConfiguration.class, OmsSecurityAutoConfiguration.class, SecurityConfig.class})
+@TestPropertySource(properties =
+        "spring.security.oauth2.resourceserver.jwt.jwk-set-uri=http://localhost/oauth2/jwks")
 class OrderControllerTest {
 
     @Autowired
@@ -70,6 +80,36 @@ class OrderControllerTest {
 
     @MockitoBean
     private OrderService orderService;
+
+    /**
+     * The real decoder would try to fetch a JWK set over HTTP at startup. Mocked out because the
+     * {@code jwt()} post-processor bypasses decoding entirely.
+     */
+    @MockitoBean
+    private JwtDecoder jwtDecoder;
+
+    // --- token helpers ---------------------------------------------------------------
+
+    private static RequestPostProcessor caller(String accountId, String... roles) {
+        return jwt().jwt(builder -> builder
+                        .subject("hammad")
+                        .claim(OmsClaims.ACCOUNT_ID, accountId)
+                        .claim(OmsClaims.ROLES, List.of(roles))
+                        .claim(OmsClaims.DISPLAY_NAME, "Test Caller"))
+                .authorities(java.util.Arrays.stream(roles)
+                        .map(role -> (org.springframework.security.core.GrantedAuthority)
+                                new org.springframework.security.core.authority
+                                        .SimpleGrantedAuthority(OmsRoles.PREFIX + role))
+                        .toList());
+    }
+
+    private static RequestPostProcessor trader() {
+        return caller(TestFixtures.ACCOUNT, OmsRoles.TRADER);
+    }
+
+    private static RequestPostProcessor riskOfficer() {
+        return caller(TestFixtures.ACCOUNT, OmsRoles.RISK);
+    }
 
     private static OrderEntity routedOrder() {
         OrderEntity order = TestFixtures.limitOrder(Side.BUY, 1_000, "172.4500");
@@ -87,6 +127,94 @@ class OrderControllerTest {
         return objectMapper.writeValueAsString(o);
     }
 
+    // =================================================================================
+    //  Authentication and authorisation
+    // =================================================================================
+
+    @Test
+    @DisplayName("no token is 401, in the platform error contract")
+    void unauthenticatedIs401() throws Exception {
+        mockMvc.perform(post("/api/v1/orders")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(validRequest())))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"))
+                .andExpect(jsonPath("$.message")
+                        .value(org.hamcrest.Matchers.containsString("bearer token")));
+    }
+
+    @Test
+    @DisplayName("a RISK officer cannot place an order - 403, not 401")
+    void riskCannotTrade() throws Exception {
+        mockMvc.perform(post("/api/v1/orders")
+                        .with(riskOfficer())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(validRequest())))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+
+        // Separation of duties: a risk officer who can also trade is not a control. 403 rather
+        // than 401 matters - it tells the client that authenticating differently will not help.
+    }
+
+    @Test
+    @DisplayName("a RISK officer can read orders")
+    void riskCanRead() throws Exception {
+        when(orderService.search(anyString(), any(), any(), any()))
+                .thenReturn(org.springframework.data.domain.Page.empty());
+
+        mockMvc.perform(get("/api/v1/orders").with(riskOfficer()))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("a token with no account claim is refused rather than passed through as null")
+    void tokenWithoutAccountClaimIsRefused() throws Exception {
+        RequestPostProcessor noAccount = jwt().jwt(builder -> builder
+                        .subject("hammad")
+                        .claim(OmsClaims.ROLES, List.of(OmsRoles.TRADER)))
+                .authorities(new org.springframework.security.core.authority
+                        .SimpleGrantedAuthority(OmsRoles.ROLE_TRADER));
+
+        mockMvc.perform(post("/api/v1/orders")
+                        .with(noAccount)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(validRequest())))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"))
+                // A null account reaching the service would query "all orders for account null",
+                // and the interesting question would be whether that returns nothing or everything.
+                .andExpect(jsonPath("$.message")
+                        .value(org.hamcrest.Matchers.containsString(OmsClaims.ACCOUNT_ID)));
+    }
+
+    @Test
+    @DisplayName("the account used by the service comes from the CLAIM, not from a header")
+    void accountComesFromTheClaimNotAHeader() throws Exception {
+        when(orderService.placeOrder(any(PlaceOrderCommand.class))).thenReturn(routedOrder());
+
+        mockMvc.perform(post("/api/v1/orders")
+                        .with(caller("ACC-REAL", OmsRoles.TRADER))
+                        // A spoofed header, which earlier phases would have trusted.
+                        .header("X-Account-Id", "ACC-SOMEONE-ELSE")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(validRequest())))
+                .andExpect(status().isCreated());
+
+        var captor = org.mockito.ArgumentCaptor.forClass(PlaceOrderCommand.class);
+        org.mockito.Mockito.verify(orderService).placeOrder(captor.capture());
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().accountId())
+                .as("the header must be ignored entirely")
+                .isEqualTo("ACC-REAL");
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().submittedBy())
+                .as("the audit actor is the JWT subject - who acted, not whose account")
+                .isEqualTo("hammad");
+    }
+
+    // =================================================================================
+    //  Behaviour
+    // =================================================================================
+
     @Test
     @DisplayName("POST returns 201 with a Location header and the accepted order")
     void placeOrderReturns201() throws Exception {
@@ -94,8 +222,7 @@ class OrderControllerTest {
         when(orderService.placeOrder(any(PlaceOrderCommand.class))).thenReturn(order);
 
         mockMvc.perform(post("/api/v1/orders")
-                        .header("X-Account-Id", TestFixtures.ACCOUNT)
-                        .header("X-User-Id", "user-1")
+                        .with(trader())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json(validRequest())))
                 .andExpect(status().isCreated())
@@ -113,8 +240,7 @@ class OrderControllerTest {
         when(orderService.findOrder(any(UUID.class), anyString()))
                 .thenThrow(NotFoundException.order("x"));
 
-        mockMvc.perform(get("/api/v1/orders/{id}", UUID.randomUUID())
-                        .header("X-Account-Id", TestFixtures.ACCOUNT))
+        mockMvc.perform(get("/api/v1/orders/{id}", UUID.randomUUID()).with(trader()))
                 .andExpect(status().isNotFound())
                 .andExpect(header().exists("X-Trace-Id"))
                 .andExpect(jsonPath("$.traceId").isNotEmpty());
@@ -127,7 +253,7 @@ class OrderControllerTest {
                 TimeInForce.DAY, new BigDecimal("172.456789"), 0);
 
         mockMvc.perform(post("/api/v1/orders")
-                        .header("X-Account-Id", TestFixtures.ACCOUNT)
+                        .with(trader())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json(invalid)))
                 .andExpect(status().isBadRequest())
@@ -146,7 +272,7 @@ class OrderControllerTest {
                 .when(orderService).placeOrder(any(PlaceOrderCommand.class));
 
         mockMvc.perform(post("/api/v1/orders")
-                        .header("X-Account-Id", TestFixtures.ACCOUNT)
+                        .with(trader())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json(validRequest())))
                 .andExpect(status().isUnprocessableEntity())
@@ -163,7 +289,7 @@ class OrderControllerTest {
                 .when(orderService).placeOrder(any(PlaceOrderCommand.class));
 
         mockMvc.perform(post("/api/v1/orders")
-                        .header("X-Account-Id", TestFixtures.ACCOUNT)
+                        .with(trader())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json(validRequest())))
                 .andExpect(status().isConflict())
@@ -179,7 +305,7 @@ class OrderControllerTest {
                 """;
 
         mockMvc.perform(post("/api/v1/orders")
-                        .header("X-Account-Id", TestFixtures.ACCOUNT)
+                        .with(trader())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isBadRequest())
@@ -189,25 +315,13 @@ class OrderControllerTest {
     }
 
     @Test
-    @DisplayName("a missing account header is 400, not 500")
-    void missingAccountHeaderReturns400() throws Exception {
-        mockMvc.perform(post("/api/v1/orders")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(json(validRequest())))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.message").value(
-                        org.hamcrest.Matchers.containsString("X-Account-Id")));
-    }
-
-    @Test
     @DisplayName("DELETE returns 202 Accepted, because a cancel is a request")
     void cancelReturns202() throws Exception {
         OrderEntity order = routedOrder();
         when(orderService.requestCancel(eq(order.getOrderId()), anyString(), any()))
                 .thenReturn(order);
 
-        mockMvc.perform(delete("/api/v1/orders/{id}", order.getOrderId())
-                        .header("X-Account-Id", TestFixtures.ACCOUNT))
+        mockMvc.perform(delete("/api/v1/orders/{id}", order.getOrderId()).with(trader()))
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.status").value("ROUTED"));
     }
@@ -215,9 +329,7 @@ class OrderControllerTest {
     @Test
     @DisplayName("an out-of-range page size is rejected by parameter validation")
     void pageSizeIsBounded() throws Exception {
-        mockMvc.perform(get("/api/v1/orders")
-                        .header("X-Account-Id", TestFixtures.ACCOUNT)
-                        .param("size", "5000"))
+        mockMvc.perform(get("/api/v1/orders").with(trader()).param("size", "5000"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
     }
@@ -229,7 +341,7 @@ class OrderControllerTest {
                 .when(orderService).placeOrder(any(PlaceOrderCommand.class));
 
         mockMvc.perform(post("/api/v1/orders")
-                        .header("X-Account-Id", TestFixtures.ACCOUNT)
+                        .with(trader())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json(validRequest())))
                 .andExpect(status().isInternalServerError())

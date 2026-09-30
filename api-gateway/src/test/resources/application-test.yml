@@ -1,0 +1,45 @@
+# Gateway test profile.
+#
+# Redis is absent, so the RequestRateLimiter filter is removed from every route: it would try to
+# connect on each request and turn an authorisation test into a connectivity test. Rate limiting
+# has its own test (RateLimitKeyResolverTest) which exercises the key resolver directly - the part
+# that is ours - rather than re-testing Spring Cloud Gateway's token bucket.
+spring:
+  cloud:
+    gateway:
+      server:
+        webflux:
+          routes:
+            - id: order-service
+              uri: http://localhost:18081
+              predicates:
+                - Path=/api/v1/orders/**
+            - id: position-service
+              uri: http://localhost:18084
+              predicates:
+                - Path=/api/v1/positions/**,/api/v1/pnl
+            - id: market-data-service
+              uri: http://localhost:18083
+              predicates:
+                - Path=/api/v1/instruments/**,/api/v1/quotes/**
+            - id: matching-engine
+              uri: http://localhost:18082
+              predicates:
+                - Path=/api/v1/books/**
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  health:
+    # No Redis in this test, and its health contributor would make /actuator/health report
+    # DOWN - turning an authorisation assertion into a connectivity one.
+    redis:
+      enabled: false
+
+logging:
+  level:
+    org.springframework.cloud.gateway: WARN
+    reactor.netty: WARN
+    com.oms: DEBUG

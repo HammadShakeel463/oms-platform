@@ -1,1 +1,2 @@
 com.oms.web.OmsWebAutoConfiguration
+com.oms.web.security.OmsSecurityAutoConfiguration

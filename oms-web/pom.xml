@@ -41,8 +41,21 @@
             <scope>provided</scope>
         </dependency>
         <dependency>
+            <!-- Optional: the security helpers are only wired when a service is actually a
+                 resource server.  keeps oms-web usable without it. -->
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
             <groupId>org.springframework</groupId>
             <artifactId>spring-tx</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <!-- Optional: only the OpenAPI helper needs it, and that is @ConditionalOnClass. -->
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-common</artifactId>
             <scope>provided</scope>
         </dependency>
     </dependencies>

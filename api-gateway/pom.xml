@@ -13,7 +13,8 @@
 
     <artifactId>api-gateway</artifactId>
     <name>api-gateway</name>
-    <description>Edge: routing, JWT authentication, role checks and rate limiting.</description>
+    <description>The only port exposed outside the cluster: routing, JWT issuance and validation,
+        role-based access, per-principal rate limiting and aggregated API docs.</description>
 
     <dependencies>
         <dependency>
@@ -21,8 +22,54 @@
             <artifactId>oms-common</artifactId>
         </dependency>
         <dependency>
+            <!-- For OmsClaims and OmsRoles only. The servlet-side helpers in oms-web are
+                 auto-configured away by @ConditionalOnWebApplication(type = SERVLET), so this
+                 reactive application picks up none of them. -->
+            <groupId>com.oms</groupId>
+            <artifactId>oms-web</artifactId>
+        </dependency>
+
+        <dependency>
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-gateway-server-webflux</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Circuit breaker on the order route. A service that is down should fail fast
+                 with a clear answer rather than holding every caller for a connect timeout. -->
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-circuitbreaker-reactor-resilience4j</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Reactive resource server: the gateway validates tokens itself as well as
+                 forwarding them, so an unauthenticated request never reaches a service. -->
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Nimbus, for signing. Spring Security ships it, and the token issuer uses its
+                 API directly, so it is a declared dependency rather than a transitive one. -->
+            <groupId>com.nimbusds</groupId>
+            <artifactId>nimbus-jose-jwt</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Redis backs the rate limiter. Reactive, because the gateway is WebFlux and a
+                 blocking Redis call on an event-loop thread would stall every other request
+                 sharing that thread. -->
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis-reactive</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webflux-ui</artifactId>
         </dependency>
 
         <dependency>
@@ -34,6 +81,22 @@
             <artifactId>micrometer-registry-prometheus</artifactId>
             <scope>runtime</scope>
         </dependency>
+
+        <!-- Test -->
+        <dependency>
+            <groupId>io.projectreactor</groupId>
+            <artifactId>reactor-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.tngtech.archunit</groupId>
+            <artifactId>archunit-junit5</artifactId>
+        </dependency>
     </dependencies>
 
     <build>
@@ -41,6 +104,9 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <classifier>app</classifier>
+                </configuration>
                 <executions>
                     <execution>
                         <goals><goal>repackage</goal></goals>

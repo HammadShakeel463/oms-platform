@@ -4,9 +4,9 @@ import com.oms.position.api.dto.AccountPnlResponse;
 import com.oms.position.api.dto.PositionResponse;
 import com.oms.position.domain.PositionEntity;
 import com.oms.position.service.PositionService;
+import com.oms.web.security.AccountId;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -21,8 +21,10 @@ import java.util.Optional;
 /**
  * Positions and P&amp;L.
  *
- * <p>{@code X-Account-Id} is the gateway-injected account, replaced by a verified JWT claim in
- * Phase 5. Read in one place, as in order-service, so the swap is a one-line change.
+ * <p>The account comes from a verified JWT claim via {@code @AccountId}, not from a header. The
+ * role decides whether the endpoint may be called; the CLAIM decides which rows come back. Getting
+ * only the first half right - "TRADER may read positions" without scoping the query - is how one
+ * trader ends up able to read another one book.
  */
 @RestController
 @RequestMapping("/api/v1")
@@ -39,7 +41,7 @@ public class PositionController {
     }
 
     @GetMapping("/positions")
-    public List<PositionResponse> positions(@RequestHeader("X-Account-Id") String accountId,
+    public List<PositionResponse> positions(@AccountId String accountId,
                                             @RequestParam(defaultValue = "true") boolean openOnly) {
         return positionService.positionsFor(accountId, openOnly).stream()
                 .map(position -> PositionResponse.from(position,
@@ -48,7 +50,7 @@ public class PositionController {
     }
 
     @GetMapping("/positions/{symbol}")
-    public PositionResponse position(@RequestHeader("X-Account-Id") String accountId,
+    public PositionResponse position(@AccountId String accountId,
                                      @PathVariable String symbol) {
         String upper = symbol.toUpperCase();
         PositionEntity position = positionService.positionFor(accountId, upper);
@@ -65,7 +67,7 @@ public class PositionController {
      * authoritative and is not.
      */
     @GetMapping("/pnl")
-    public AccountPnlResponse pnl(@RequestHeader("X-Account-Id") String accountId) {
+    public AccountPnlResponse pnl(@AccountId String accountId) {
         List<PositionEntity> positions = positionService.positionsFor(accountId, false);
 
         BigDecimal realised = BigDecimal.ZERO;

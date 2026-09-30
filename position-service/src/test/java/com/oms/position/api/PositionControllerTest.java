@@ -2,14 +2,22 @@ package com.oms.position.api;
 
 import com.oms.common.domain.Side;
 import com.oms.position.domain.PositionEntity;
+import com.oms.position.config.SecurityConfig;
 import com.oms.position.service.PositionService;
+import com.oms.web.OmsWebAutoConfiguration;
+import com.oms.web.security.OmsClaims;
+import com.oms.web.security.OmsRoles;
+import com.oms.web.security.OmsSecurityAutoConfiguration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -35,7 +43,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * is invisible in a unit test of the arithmetic.
  */
 @WebMvcTest(PositionController.class)
-@Import(com.oms.web.OmsWebAutoConfiguration.class)
+@Import({OmsWebAutoConfiguration.class, OmsSecurityAutoConfiguration.class, SecurityConfig.class})
+@TestPropertySource(properties =
+        "spring.security.oauth2.resourceserver.jwt.jwk-set-uri=http://localhost/oauth2/jwks")
 class PositionControllerTest {
 
     private static final String ACCOUNT = "ACC-TRADER-1";
@@ -45,6 +55,28 @@ class PositionControllerTest {
 
     @MockitoBean
     private PositionService positionService;
+
+    /** Mocked: the jwt() post-processor bypasses decoding, so nothing should fetch a JWK set. */
+    @MockitoBean
+    private JwtDecoder jwtDecoder;
+
+    private static RequestPostProcessor caller(String accountId, String... roles) {
+        return org.springframework.security.test.web.servlet.request
+                .SecurityMockMvcRequestPostProcessors.jwt()
+                .jwt(builder -> builder
+                        .subject("hammad")
+                        .claim(OmsClaims.ACCOUNT_ID, accountId)
+                        .claim(OmsClaims.ROLES, java.util.List.of(roles)))
+                .authorities(java.util.Arrays.stream(roles)
+                        .map(role -> (org.springframework.security.core.GrantedAuthority)
+                                new org.springframework.security.core.authority
+                                        .SimpleGrantedAuthority(OmsRoles.PREFIX + role))
+                        .toList());
+    }
+
+    private static RequestPostProcessor trader() {
+        return caller(ACCOUNT, OmsRoles.TRADER);
+    }
 
     @org.springframework.boot.test.context.TestConfiguration
     static class FixedClock {
@@ -68,7 +100,7 @@ class PositionControllerTest {
         when(positionService.markFor("HBL")).thenReturn(Optional.of(new BigDecimal("174.0000")));
 
         mockMvc.perform(get("/api/v1/positions/{symbol}", "HBL")
-                        .header("X-Account-Id", ACCOUNT))
+                        .with(trader()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.netQuantity").value(500))
                 .andExpect(jsonPath("$.averageCost").value(170.0))
@@ -85,7 +117,7 @@ class PositionControllerTest {
         when(positionService.markFor("HBL")).thenReturn(Optional.empty());
 
         mockMvc.perform(get("/api/v1/positions/{symbol}", "HBL")
-                        .header("X-Account-Id", ACCOUNT))
+                        .with(trader()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.netQuantity").value(500))
                 .andExpect(jsonPath("$.unrealisedPnl").doesNotExist())
@@ -100,7 +132,7 @@ class PositionControllerTest {
         when(positionService.markFor("NOSUCH")).thenReturn(Optional.empty());
 
         mockMvc.perform(get("/api/v1/positions/{symbol}", "nosuch")
-                        .header("X-Account-Id", ACCOUNT))
+                        .with(trader()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.netQuantity").value(0))
                 .andExpect(jsonPath("$.symbol").value("NOSUCH"));
@@ -119,7 +151,7 @@ class PositionControllerTest {
         when(positionService.markFor("HBL")).thenReturn(Optional.of(new BigDecimal("174.0000")));
         when(positionService.markFor("OGDC")).thenReturn(Optional.empty());
 
-        mockMvc.perform(get("/api/v1/pnl").header("X-Account-Id", ACCOUNT))
+        mockMvc.perform(get("/api/v1/pnl").with(trader()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.realisedPnl").value(1000.0))
                 .andExpect(jsonPath("$.unrealisedPnl").value(2000.0))
@@ -141,7 +173,7 @@ class PositionControllerTest {
         when(positionService.markFor("HBL")).thenReturn(Optional.of(new BigDecimal("174.0000")));
         when(positionService.markFor("LUCK")).thenReturn(Optional.empty());
 
-        mockMvc.perform(get("/api/v1/pnl").header("X-Account-Id", ACCOUNT))
+        mockMvc.perform(get("/api/v1/pnl").with(trader()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.complete")
                         .value(false))
@@ -159,19 +191,50 @@ class PositionControllerTest {
                 .thenReturn(List.of(longPosition("HBL", 500, "170.0000")));
         when(positionService.markFor(anyString())).thenReturn(Optional.empty());
 
-        mockMvc.perform(get("/api/v1/positions").header("X-Account-Id", ACCOUNT))
+        mockMvc.perform(get("/api/v1/positions").with(trader()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(1))
                 .andExpect(jsonPath("$[0].symbol").value("HBL"));
     }
 
     @Test
-    @DisplayName("a missing account header is 400 from the shared advice, not 500")
-    void missingAccountHeader() throws Exception {
+    @DisplayName("no token is 401, in the platform error contract")
+    void unauthenticatedIs401() throws Exception {
         mockMvc.perform(get("/api/v1/positions"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
-                .andExpect(jsonPath("$.message")
-                        .value(org.hamcrest.Matchers.containsString("X-Account-Id")));
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"));
+    }
+
+    @Test
+    @DisplayName("a RISK officer can read positions - the role is read-only by design")
+    void riskCanRead() throws Exception {
+        when(positionService.positionsFor(anyString(), anyBoolean())).thenReturn(List.of());
+
+        mockMvc.perform(get("/api/v1/positions").with(caller(ACCOUNT, OmsRoles.RISK)))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("an authenticated caller with no recognised role is 403")
+    void unknownRoleIsForbidden() throws Exception {
+        mockMvc.perform(get("/api/v1/positions").with(caller(ACCOUNT, "SOMETHING-ELSE")))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+    }
+
+    @Test
+    @DisplayName("the rows returned are scoped to the account in the CLAIM, not to a header")
+    void rowsAreScopedToTheTokenAccount() throws Exception {
+        when(positionService.positionsFor(anyString(), anyBoolean())).thenReturn(List.of());
+
+        mockMvc.perform(get("/api/v1/positions")
+                        .with(caller("ACC-REAL", OmsRoles.TRADER))
+                        // Earlier phases would have trusted this header.
+                        .header("X-Account-Id", "ACC-SOMEONE-ELSE"))
+                .andExpect(status().isOk());
+
+        // Role says "may call this endpoint"; the claim says "these rows". Getting only the first
+        // half right is how one trader ends up able to read another one's book.
+        org.mockito.Mockito.verify(positionService).positionsFor(eq("ACC-REAL"), anyBoolean());
     }
 }
