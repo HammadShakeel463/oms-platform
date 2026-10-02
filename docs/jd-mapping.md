@@ -10,7 +10,7 @@ What to point at when a job description lists a technology. Kept current as each
 | — pattern matching for `instanceof` *(Java 16)* | entity and composite-key equality | 2 | ✅ |
 | — pattern matching for `switch` *(Java **21**, preview in 17)* | `PositionEventListener.apply` — exhaustive over sealed `DomainEvent`, no `default` branch | 4 | ✅ |
 | — virtual threads *(Java **21**)* | market-data streaming subscribers, via an injected `AsyncTaskExecutor`; `vthreads` profile on order-service | 2, 4 | ✅ |
-| Maven multi-module | parent POM + 8 modules, BOM-managed versions, a Boot auto-configuration library | 1, 3 | ✅ |
+| Maven multi-module | parent POM + 8 modules, BOM-managed versions, a Boot auto-configuration library and a shared test-jar | 1, 3, 6 | ✅ |
 | Spring Boot 3.x | Boot 3.5.16, all five services | 1 | ✅ |
 | — Spring Web | 4 services: orders, book depth, instruments/quotes/SSE, positions/P&L | 2–4 | ✅ |
 | — Spring Data JPA + Hibernate | 9 entities, 10 repositories, derived + JPQL + native SQL | 2, 4 | ✅ |
@@ -26,15 +26,15 @@ What to point at when a job description lists a technology. Kept current as each
 | Role-based access | `TRADER` / `RISK` / `ADMIN`, enforced at the gateway AND per service; RISK is read-only by design | 5 | ✅ |
 | JUnit 5 | every module; Surefire wired | 1 | ✅ |
 | Mockito | service-layer tests in 2 services, `@MockitoBean` in 2 slice tests | 2, 4 | ✅ |
-| Testcontainers | 5 ITs across 4 services — Postgres, Kafka, Redis | 2–4 | ✅ written |
-| Coverage > 70% | JaCoCo `coverage-gate` profile, enforced in CI | 1 (wired) 6 (gated) | ✅ wired |
+| Testcontainers | 5 ITs across 4 services — Postgres, Kafka, Redis; shared `TestJwt` test-jar for auth | 2–4, 6 | ✅ written |
+| Coverage > 70% | JaCoCo `coverage-gate` profile, enforced by the CI integration job | 1, 6 | ✅ written |
 | Global exception handling | `oms-web`: a Boot auto-configuration shared by all 4 web services, 9 handlers, one contract | 1–4 | ✅ |
-| Docker / docker-compose | one-command full stack | 6 | ⏳ |
-| Kubernetes manifests | Deployment, Service, ConfigMap, Secret per service | 6 | ⏳ |
-| GitHub Actions CI/CD | build, test, coverage gate, image publish | 6 | ⏳ |
-| Structured JSON logging | logstash-logback-encoder, MDC with trace + order id | 6 | ⏳ |
-| Micrometer + Prometheus + Grafana | registry in every service; engine exports a real percentile histogram, not a mean | 1 (wired) 6 (dashboard) | ✅ wired |
-| Distributed tracing | Micrometer Tracing → OTLP, propagated over Kafka headers | 6 | ⏳ |
+| Docker / docker-compose | one parameterised multi-stage Dockerfile, non-root, `docker compose up` brings up the whole stack | 6 | ✅ written |
+| Kubernetes manifests | Deployment + Service + PDB per service, ConfigMap, Secret, NetworkPolicies, Ingress, 2 HPAs, kustomize | 6 | ✅ written |
+| GitHub Actions CI/CD | 4 jobs: unit, integration + 70% coverage gate, manifest lint, 5-way image matrix to GHCR + Trivy | 6 | ✅ written |
+| Structured JSON logging | one shared `logback-spring.xml` in `oms-web`, profile-selected, MDC included wholesale | 6 | ✅ |
+| Micrometer + Prometheus + Grafana | real percentile histograms, 7 alerting rules, provisioned 17-panel dashboard | 1, 6 | ✅ written |
+| Distributed tracing | Micrometer Tracing → OTLP → Tempo, propagated over Kafka headers so one order is one trace | 6 | ✅ written |
 
 ## Domain differentiators — the part that is not on any JD
 

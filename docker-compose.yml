@@ -1,0 +1,330 @@
+# =====================================================================================
+#  The whole platform, one command:
+#
+#      docker compose up --build
+#
+#  Brings up PostgreSQL, Kafka, Redis, the five services, Prometheus, Grafana and Tempo.
+#  First run builds five images and takes a few minutes; afterwards the Maven cache mount
+#  makes rebuilds fast.
+#
+#  Ports: gateway 8080 (the only one a client needs), services 8081-8084, Grafana 3000,
+#  Prometheus 9090. The service ports are published only so they can be curled directly
+#  while developing - in Kubernetes they are cluster-internal.
+# =====================================================================================
+
+name: oms-platform
+
+# ---------------------------------------------------------------------------------------
+#  Shared fragments. YAML anchors keep the five service definitions honest: there is one
+#  place that says how a service talks to Kafka, so they cannot drift.
+# ---------------------------------------------------------------------------------------
+x-service-base: &service-base
+  restart: unless-stopped
+  networks: [oms]
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+x-infra-env: &infra-env
+  SPRING_PROFILES_ACTIVE: docker
+  KAFKA_BOOTSTRAP: kafka:9092
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  DB_NAME: oms
+  JWKS_URI: http://api-gateway:8080/oauth2/jwks
+  # Traces go to Tempo over OTLP. Micrometer Tracing propagates the trace id across REST
+  # calls and over Kafka headers, so one order is a single trace end to end.
+  MANAGEMENT_OTLP_TRACING_ENDPOINT: http://tempo:4318/v1/traces
+  MANAGEMENT_TRACING_SAMPLING_PROBABILITY: "1.0"
+
+services:
+
+  # =====================================================================================
+  #  Infrastructure
+  # =====================================================================================
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: oms-postgres
+    <<: *service-base
+    environment:
+      POSTGRES_DB: oms
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      # Checksums catch silent corruption. Cheap, and off by default.
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    ports: ["5432:5432"]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Creates one least-privileged role and schema per service. Runs once, on an empty
+      # data directory - so after changing it you must `docker compose down -v`.
+      - ./ops/postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # -U postgres -d oms, not a bare pg_isready: the latter reports the server as up
+      # before the database exists, and the services then fail their first connection.
+      test: ["CMD-SHELL", "pg_isready -U postgres -d oms"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  kafka:
+    # KRaft - no ZooKeeper. One container instead of two, and the mode Kafka ships by default.
+    image: apache/kafka:3.8.1
+    container_name: oms-kafka
+    <<: *service-base
+    ports: ["9092:9092"]
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      # Single broker, so nothing can be replicated. These are the only values that work.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      # OFF, deliberately. A typo in a topic name should fail loudly rather than silently
+      # create a topic with one partition that nobody monitors (ops/kafka-topics.md).
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      KAFKA_LOG_RETENTION_HOURS: "168"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 20s
+
+  kafka-init:
+    # Creates every topic with its intended partition count and retention, then exits.
+    # Idempotent (--if-not-exists), so a restart is a no-op.
+    image: apache/kafka:3.8.1
+    container_name: oms-kafka-init
+    networks: [oms]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    volumes:
+      - ./ops/create-topics.sh:/create-topics.sh:ro
+    environment:
+      KAFKA_BROKER: kafka:9092
+      REPLICATION_FACTOR: "1"
+    entrypoint: ["/bin/bash", "/create-topics.sh"]
+    restart: "no"
+
+  redis:
+    image: redis:7-alpine
+    container_name: oms-redis
+    <<: *service-base
+    ports: ["6379:6379"]
+    # maxmemory with allkeys-lru so Redis evicts rather than refusing writes when full.
+    # Every use of Redis here is a cache or a rate-limit bucket - losing an entry degrades
+    # latency, it does not lose data - so eviction is strictly better than an error.
+    command: >
+      redis-server --save 60 1 --loglevel warning
+      --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # =====================================================================================
+  #  Platform services
+  #
+  #  depends_on uses service_healthy, not service_started. Without it a service races the
+  #  database, Flyway fails, and the container restarts in a loop that looks like a bug in
+  #  the application.
+  # =====================================================================================
+
+  api-gateway:
+    <<: *service-base
+    container_name: oms-api-gateway
+    build:
+      context: .
+      args:
+        MODULE: api-gateway
+        SERVICE_PORT: "8080"
+    image: oms/api-gateway:local
+    ports: ["8080:8080"]
+    environment:
+      <<: *infra-env
+      ORDER_SERVICE_URL: http://order-service:8081
+      MATCHING_ENGINE_URL: http://matching-engine:8082
+      MARKET_DATA_URL: http://market-data-service:8083
+      POSITION_SERVICE_URL: http://position-service:8084
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  order-service:
+    <<: *service-base
+    container_name: oms-order-service
+    build:
+      context: .
+      args:
+        MODULE: order-service
+        SERVICE_PORT: "8081"
+    image: oms/order-service:local
+    ports: ["8081:8081"]
+    environment:
+      <<: *infra-env
+      DB_USER: oms_order
+      DB_PASSWORD: oms_order
+      # remote, so the full reference-data path through market-data-service and Redis is
+      # exercised rather than the built-in static catalogue.
+      REFERENCE_SOURCE: remote
+      MARKET_DATA_URL: http://market-data-service:8083
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+
+  matching-engine:
+    <<: *service-base
+    container_name: oms-matching-engine
+    build:
+      context: .
+      args:
+        MODULE: matching-engine
+        SERVICE_PORT: "8082"
+    image: oms/matching-engine:local
+    ports: ["8082:8082"]
+    environment:
+      <<: *infra-env
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+
+  market-data-service:
+    <<: *service-base
+    container_name: oms-market-data-service
+    build:
+      context: .
+      args:
+        MODULE: market-data-service
+        SERVICE_PORT: "8083"
+    image: oms/market-data-service:local
+    ports: ["8083:8083"]
+    environment:
+      <<: *infra-env
+      DB_USER: oms_marketdata
+      DB_PASSWORD: oms_marketdata
+      SIMULATOR_ENABLED: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+
+  position-service:
+    <<: *service-base
+    container_name: oms-position-service
+    build:
+      context: .
+      args:
+        MODULE: position-service
+        SERVICE_PORT: "8084"
+    image: oms/position-service:local
+    ports: ["8084:8084"]
+    environment:
+      <<: *infra-env
+      DB_USER: oms_position
+      DB_PASSWORD: oms_position
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+
+  # =====================================================================================
+  #  Observability
+  # =====================================================================================
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: oms-prometheus
+    <<: *service-base
+    ports: ["9090:9090"]
+    volumes:
+      - ./ops/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./ops/observability/rules.yml:/etc/prometheus/rules.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+      # Needed for the Grafana "Explore" view to query by example and for recording rules
+      # to be reloadable without a restart.
+      - --web.enable-lifecycle
+
+  tempo:
+    image: grafana/tempo:2.6.0
+    container_name: oms-tempo
+    <<: *service-base
+    ports:
+      - "3200:3200"    # query API, used by Grafana
+      - "4318:4318"    # OTLP/HTTP, where the services send spans
+    volumes:
+      - ./ops/observability/tempo.yml:/etc/tempo.yml:ro
+      - tempo-data:/var/tempo
+    command: ["-config.file=/etc/tempo.yml"]
+    user: "0:0"
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: oms-grafana
+    <<: *service-base
+    ports: ["3000:3000"]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      # Anonymous viewer access: this is a local demo stack and a login prompt between a
+      # reviewer and the dashboard is friction with no security value here.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      # Provisioned from files, not clicked together in the UI. A dashboard that exists only
+      # in Grafana's database is a dashboard that disappears with the volume.
+      - ./ops/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./ops/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_started
+
+networks:
+  oms:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  kafka-data:
+  redis-data:
+  prometheus-data:
+  grafana-data:
+  tempo-data:

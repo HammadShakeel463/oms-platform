@@ -1,0 +1,34 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: oms
+
+# Numbered so `kubectl apply -k` orders them the way a human would: namespace and config
+# before the workloads that reference them.
+resources:
+  - 00-namespace.yaml
+  - 10-configmap.yaml
+  - 11-secret.yaml
+  - 20-api-gateway.yaml
+  - 21-order-service.yaml
+  - 22-matching-engine.yaml
+  - 23-market-data-service.yaml
+  - 24-position-service.yaml
+  - 30-ingress.yaml
+  - 31-hpa.yaml
+
+commonLabels:
+  app.kubernetes.io/part-of: oms-platform
+  app.kubernetes.io/managed-by: kustomize
+
+images:
+  - name: ghcr.io/hammadshakeel463/oms-api-gateway
+    newTag: latest
+  - name: ghcr.io/hammadshakeel463/oms-order-service
+    newTag: latest
+  - name: ghcr.io/hammadshakeel463/oms-matching-engine
+    newTag: latest
+  - name: ghcr.io/hammadshakeel463/oms-market-data-service
+    newTag: latest
+  - name: ghcr.io/hammadshakeel463/oms-position-service
+    newTag: latest

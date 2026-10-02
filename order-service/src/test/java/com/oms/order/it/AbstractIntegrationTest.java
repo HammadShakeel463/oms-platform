@@ -2,6 +2,8 @@ package com.oms.order.it;
 
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import com.oms.web.testsupport.TestSecurityConfig;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -31,6 +33,9 @@ import org.testcontainers.utility.DockerImageName;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("integration-test")
+// Replaces only the JWKS-fetching decoder; the filter chain, the roles converter and the
+// production token validator are all the real ones.
+@Import(TestSecurityConfig.class)
 @Testcontainers
 public abstract class AbstractIntegrationTest {
 

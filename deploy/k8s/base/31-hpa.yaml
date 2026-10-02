@@ -1,0 +1,47 @@
+# Horizontal scaling for the two tiers that benefit from it.
+#
+# order-service scales on CPU because its work is per-request. matching-engine is capped at
+# the partition count (12): a partition is consumed by at most one member of a group, so a
+# 13th pod would sit idle - the ceiling is a Kafka property, not a resource one. That cap is
+# the single most important thing to know before scaling this platform.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: order-service
+  namespace: oms
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: order-service }
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
+  behavior:
+    scaleDown:
+      # Slow to scale down, quick to scale up. Trading volume is bursty, and a rebalance on
+      # every lull costs more than the pod does.
+      stabilizationWindowSeconds: 300
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: matching-engine
+  namespace: oms
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: matching-engine }
+  minReplicas: 2
+  # Hard ceiling at the partition count. More pods than partitions means idle pods, and every
+  # scale event triggers a consumer-group rebalance that drops and rebuilds in-memory books.
+  maxReplicas: 12
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 75 }
+  behavior:
+    scaleDown:
+      # Much slower than order-service: scaling the engine down forces a rebalance, and a
+      # rebalance means replaying a partition to rebuild a book. Thrashing here is expensive.
+      stabilizationWindowSeconds: 900

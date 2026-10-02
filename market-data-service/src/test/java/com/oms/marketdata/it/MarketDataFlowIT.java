@@ -22,6 +22,10 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import com.oms.web.security.OmsRoles;
+import com.oms.web.testsupport.TestJwt;
+import com.oms.web.testsupport.TestSecurityConfig;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -49,6 +53,7 @@ import static org.awaitility.Awaitility.await;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("integration-test")
+@Import(TestSecurityConfig.class)
 @Testcontainers
 class MarketDataFlowIT {
 
@@ -79,6 +84,23 @@ class MarketDataFlowIT {
     private org.springframework.data.redis.core.StringRedisTemplate redis;
 
     private Consumer<String, String> tickConsumer;
+
+    /**
+     * Market data requires an authenticated caller - a quote is not account data, but an
+     * unauthenticated feed of a venue is a product somebody sells. An interceptor rather than a
+     * header per call, because several assertions use the convenience getForObject form.
+     */
+    @BeforeEach
+    void authenticate() {
+        var interceptors = rest.getRestTemplate().getInterceptors();
+        if (interceptors.isEmpty()) {
+            interceptors.add((request, body, execution) -> {
+                request.getHeaders().set(org.springframework.http.HttpHeaders.AUTHORIZATION,
+                        TestJwt.bearer("ACC-TRADER-1", "integration-test", OmsRoles.TRADER));
+                return execution.execute(request, body);
+            });
+        }
+    }
 
     @BeforeEach
     void subscribe() {

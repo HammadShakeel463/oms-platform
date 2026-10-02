@@ -1,5 +1,9 @@
 # Testcontainers profile. Connection details come from @ServiceConnection.
 spring:
+  main:
+    # Lets TestSecurityConfig replace the JWKS-fetching decoder. Scoped to this profile on
+    # purpose: enabled globally it would let any accidental duplicate bean definition win.
+    allow-bean-definition-overriding: true
   jpa:
     hibernate:
       ddl-auto: validate

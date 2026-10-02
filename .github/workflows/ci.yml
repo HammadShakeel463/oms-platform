@@ -1,0 +1,234 @@
+name: CI
+
+# Pull requests and pushes to main. Not every branch: a push to a personal branch that is not
+# yet a PR does not need to burn a runner, and the PR run is the one that gates the merge.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# A new push to the same PR cancels the previous run. Without this, pushing three fixes in a
+# minute queues three full builds and the first two are already irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MAVEN_ARGS: "-B -ntp"
+
+jobs:
+
+  # =====================================================================================
+  #  Unit tests - fast, no Docker. Runs first so an obvious break fails in two minutes
+  #  rather than after the container-based suite has finished.
+  # =====================================================================================
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          # 21, not 17: pattern matching for switch and virtual threads are Java 21 features
+          # that the project uses. See docs/adr/0006-target-java-21-not-17.md.
+          java-version: "21"
+          cache: maven
+
+      - name: Compile
+        run: ./mvnw ${MAVEN_ARGS} -DskipTests install
+
+      - name: Unit tests
+        run: ./mvnw ${MAVEN_ARGS} test
+
+      - name: Publish test report
+        # always(), not success(): the report is most useful precisely when the step above
+        # failed, and a conditional that skips it on failure hides the reason.
+        if: always()
+        uses: mikepenz/action-junit-report@v4
+        with:
+          report_paths: "**/target/surefire-reports/TEST-*.xml"
+          check_name: Unit test results
+          fail_on_failure: true
+
+  # =====================================================================================
+  #  Integration tests - Testcontainers, so a real Docker daemon. ubuntu-latest has one.
+  # =====================================================================================
+  integration-tests:
+    name: Integration tests (Testcontainers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    needs: unit-tests
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Pre-pull container images
+        # Pulling in a dedicated step means an image-registry hiccup fails here with an obvious
+        # message, instead of surfacing as a Testcontainers startup timeout that looks like a
+        # flaky test.
+        run: |
+          docker pull postgres:16-alpine &
+          docker pull apache/kafka:3.8.1 &
+          docker pull redis:7-alpine &
+          wait
+
+      - name: Verify (unit + integration + coverage gate)
+        # verify runs Failsafe (*IT) as well as Surefire, and -Pcoverage-gate fails the build
+        # below 70% line coverage. The gate is on this job rather than the fast one because
+        # coverage is only meaningful once the integration tests have contributed to it.
+        run: ./mvnw ${MAVEN_ARGS} verify -Pcoverage-gate
+
+      - name: Publish integration test report
+        if: always()
+        uses: mikepenz/action-junit-report@v4
+        with:
+          report_paths: "**/target/failsafe-reports/TEST-*.xml"
+          check_name: Integration test results
+          fail_on_failure: true
+
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-reports
+          path: "**/target/site/jacoco/**"
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Coverage summary
+        if: always()
+        run: |
+          echo "### Coverage" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Module | Line coverage |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          for csv in $(find . -name jacoco.csv); do
+            module=$(echo "$csv" | cut -d/ -f2)
+            pct=$(awk -F, 'NR>1 {missed+=$4; covered+=$5} END {if (missed+covered>0) printf "%.1f%%", covered*100/(missed+covered); else print "n/a"}' "$csv")
+            echo "| $module | $pct |" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+  # =====================================================================================
+  #  Static checks that do not need a JVM warm-up
+  # =====================================================================================
+  manifests:
+    name: Manifest and script checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate docker-compose
+        # `config` parses and resolves the file - anchors, variable substitution, the lot -
+        # without starting anything. Catches a YAML or reference error in seconds.
+        run: docker compose config --quiet
+
+      - name: Validate Kubernetes manifests
+        run: |
+          curl -sLo kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar xzf kubeconform.tar.gz
+          # -strict rejects unknown fields, which is what catches a typo in a field name that
+          # Kubernetes would otherwise silently ignore.
+          ./kubeconform -strict -summary -ignore-missing-schemas deploy/k8s/base/
+
+      - name: Shell script lint
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck ops/create-topics.sh
+
+  # =====================================================================================
+  #  Build and publish images - only from main, only after the tests pass.
+  # =====================================================================================
+  publish-images:
+    name: Build and publish images
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: [integration-tests, manifests]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    permissions:
+      contents: read
+      # Required for the GITHUB_TOKEN to push to GHCR. Scoped to this job, not the workflow:
+      # the test jobs have no business holding a write token.
+      packages: write
+
+    strategy:
+      # All five build in parallel, and one failure does not cancel the others - so a broken
+      # Dockerfile for one service is reported alongside the four that worked.
+      fail-fast: false
+      matrix:
+        include:
+          - { module: api-gateway,         port: 8080 }
+          - { module: order-service,       port: 8081 }
+          - { module: matching-engine,     port: 8082 }
+          - { module: market-data-service, port: 8083 }
+          - { module: position-service,    port: 8084 }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/oms-${{ matrix.module }}
+          tags: |
+            type=raw,value=latest
+            type=sha,format=long
+            type=ref,event=branch
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          build-args: |
+            MODULE=${{ matrix.module }}
+            SERVICE_PORT=${{ matrix.port }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # GitHub Actions cache, so the Maven dependency layer survives between runs. Without
+          # it every image build re-resolves the whole dependency tree.
+          cache-from: type=gha,scope=${{ matrix.module }}
+          cache-to: type=gha,scope=${{ matrix.module }},mode=max
+          provenance: false
+
+      - name: Scan image for vulnerabilities
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ghcr.io/${{ github.repository_owner }}/oms-${{ matrix.module }}:latest
+          format: table
+          # HIGH and CRITICAL only, and ignore-unfixed. A scan that reports every LOW in the
+          # base image trains people to ignore the output, and an unfixed CVE is not actionable
+          # by this repository.
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          # Report, do not fail: a new CVE in the base image appearing overnight should not
+          # block an unrelated deploy. It should be visible, and it is, in the job summary.
+          exit-code: "0"

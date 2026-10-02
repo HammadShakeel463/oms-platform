@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oms-platform-config
+  namespace: oms
+  labels:
+    app.kubernetes.io/part-of: oms-platform
+# Non-secret configuration shared by every service. Hostnames, not values that change per
+# service: anything one service needs and another does not belongs in that service's own env.
+data:
+  SPRING_PROFILES_ACTIVE: "docker,k8s"
+  DB_HOST: "postgres.oms.svc.cluster.local"
+  DB_PORT: "5432"
+  DB_NAME: "oms"
+  KAFKA_BOOTSTRAP: "kafka.oms.svc.cluster.local:9092"
+  REDIS_HOST: "redis.oms.svc.cluster.local"
+  REDIS_PORT: "6379"
+  # Cluster-internal DNS, so the services fetch JWKS from the gateway without leaving the
+  # cluster or depending on the Ingress being up.
+  JWKS_URI: "http://api-gateway.oms.svc.cluster.local:8080/oauth2/jwks"
+  ORDER_SERVICE_URL: "http://order-service.oms.svc.cluster.local:8081"
+  MATCHING_ENGINE_URL: "http://matching-engine.oms.svc.cluster.local:8082"
+  MARKET_DATA_URL: "http://market-data-service.oms.svc.cluster.local:8083"
+  POSITION_SERVICE_URL: "http://position-service.oms.svc.cluster.local:8084"
+  MANAGEMENT_OTLP_TRACING_ENDPOINT: "http://tempo.monitoring.svc.cluster.local:4318/v1/traces"
+  # 10%, not the 100% used locally. At cluster volume, sampling everything makes the exporter
+  # and the trace backend the bottleneck.
+  MANAGEMENT_TRACING_SAMPLING_PROBABILITY: "0.1"
+  REFERENCE_SOURCE: "remote"

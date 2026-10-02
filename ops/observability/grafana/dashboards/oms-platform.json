@@ -1,0 +1,388 @@
+{
+  "uid": "oms-platform",
+  "title": "OMS Platform",
+  "description": "Order flow, matching latency, data integrity and market data. Panels are grouped so the top row answers 'is the platform healthy' and the rows below answer 'why not'.",
+  "tags": ["oms", "trading"],
+  "timezone": "browser",
+  "editable": true,
+  "schemaVersion": 39,
+  "refresh": "10s",
+  "time": { "from": "now-30m", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "label": "Service",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "oms-prometheus" },
+        "query": "label_values(up{job=\"oms-services\"}, service)",
+        "includeAll": true,
+        "multi": true,
+        "refresh": 1
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Health",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "title": "Services up",
+      "description": "Scrape health. A service that stops being scraped is either down or its actuator is unreachable - both worth knowing before a client tells you.",
+      "datasource": { "type": "prometheus", "uid": "oms-prometheus" },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "targets": [
+        { "refId": "A", "expr": "sum(up{job=\"oms-services\"})", "legendFormat": "up" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 4 },
+              { "color": "green", "value": 5 }
+            ]
+          },
+          "max": 5,
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value_and_name" }
+    },
+    {
+      "type": "stat",
+      "title": "Outbox backlog",
+      "description": "Unpublished rows in the transactional outbox. Normally zero: the poller drains it every 200ms. A sustained non-zero value means Kafka is unreachable and orders are being accepted but never worked - and the API is still returning 201.",
+      "datasource": { "type": "prometheus", "uid": "oms-prometheus" },
+      "gridPos": { "h": 4, "w": 5, "x": 4, "y": 1 },
+      "targets": [
+        { "refId": "A", "expr": "sum(oms_outbox_backlog)", "legendFormat": "rows" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 50 },
+              { "color": "red", "value": 500 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "area" }
+    },
+    {
+      "type": "stat",
+      "title": "Dead-lettered (5m)",
+      "description": "A message here could not be processed after every retry. Should be exactly zero; anything else is a page, not a trend.",
+      "datasource": { "type": "prometheus", "uid": "oms-prometheus" },
+      "gridPos": { "h": 4, "w": 5, "x": 9, "y": 1 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(spring_kafka_template_seconds_count{name=~\".*dlt.*\"}[5m])) or vector(0)",
+          "legendFormat": "messages"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "none" }
+    },
+    {
+      "type": "stat",
+      "title": "Orders accepted / s",
+      "datasource": { "type": "prometheus", "uid": "oms-prometheus" },
+      "gridPos": { "h": 4, "w": 5, "x": 14, "y": 1 },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(oms_order_created_total[1m]))", "legendFormat": "orders/s" }
+      ],
+      "fieldConfig": { "defaults": { "decimals": 2, "unit": "reqps" }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "area" }
+    },
+    {
+      "type": "stat",
+      "title": "Ticks / s",
+      "description": "Market data feed liveness. Zero means the simulator has stopped and cached quotes will expire, after which market orders are rejected for want of a reference price.",
+      "datasource": { "type": "prometheus", "uid": "oms-prometheus" },
+      "gridPos": { "h": 4, "w": 5, "x": 19, "y": 1 },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(oms_marketdata_ticks_published_total[1m]))", "legendFormat": "ticks/s" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "area" }
+    },
+
+    {
+      "type": "row",
+      "title": "Matching engine",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Matching latency percentiles",
+      "description": "p50, p95, p99 and p99.9 from a real histogram, not a mean. A latency mean is close to useless here: in the benchmark the baseline's mean was 55x its median, and no individual operation experienced the average.",
+      "datasource": { "type": "prometheus", "uid": "oms-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum(rate(oms_engine_match_seconds_bucket[1m])) by (le))", "legendFormat": "p50" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum(rate(oms_engine_match_seconds_bucket[1m])) by (le))", "legendFormat": "p95" },
+        { "refId": "C", "expr": "histogram_quantile(0.99, sum(rate(oms_engine_match_seconds_bucket[1m])) by (le))", "legendFormat": "p99" },
+        { "refId": "D", "expr": "histogram_quantile(0.999, sum(rate(oms_engine_match_seconds_bucket[1m])) by (le))", "legendFormat": "p99.9" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "lineWidth": 1, "fillOpacity": 5, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Trades and cancels per second",
+      "datasource": { "type": "prometheus", "uid": "oms-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(oms_engine_trades_published_total[1m]))", "legendFormat": "trades/s" },
+        { "refId": "B", "expr": "sum(rate(oms_engine_cancels_published_total[1m]))", "legendFormat": "cancel reports/s" },
+        { "refId": "C", "expr": "sum(rate(oms_engine_duplicates_ignored_total[1m]))", "legendFormat": "duplicates ignored/s" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "lineWidth": 1, "fillOpacity": 10, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Book depth (price levels per side)",
+      "datasource": { "type": "prometheus", "uid": "oms-prometheus" },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 14 },
+      "targets": [
+        { "refId": "A", "expr": "oms_engine_book_levels{side=\"bid\"}", "legendFormat": "{{symbol}} bid" },
+        { "refId": "B", "expr": "oms_engine_book_levels{side=\"ask\"}", "legendFormat": "{{symbol}} ask" }
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "lineWidth": 1, "fillOpacity": 0, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Spread (ticks)",
+      "description": "Best ask minus best bid. NaN - a gap in the line - means a one-sided book, which is why the gauge reports NaN rather than zero.",
+      "datasource": { "type": "prometheus", "uid": "oms-prometheus" },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 14 },
+      "targets": [
+        { "refId": "A", "expr": "oms_engine_book_spread_ticks", "legendFormat": "{{symbol}}" }
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "lineWidth": 1, "fillOpacity": 0, "showPoints": "never", "spanNulls": false } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+
+    {
+      "type": "row",
+      "title": "Order path",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 21 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Order lifecycle transitions per second",
+      "description": "Where orders are going. A rising REJECTED line with a flat FILLED line means risk is refusing everything - usually a stale reference price.",
+      "datasource": { "type": "prometheus", "uid": "oms-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 22 },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(oms_order_transitions_total[1m])) by (to)", "legendFormat": "{{to}}" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "lineWidth": 1, "fillOpacity": 20, "stacking": { "mode": "normal" }, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean"] } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Risk rejections by check",
+      "description": "Tagged by which limit fired, which is the whole reason the risk suite is a list of individually named beans rather than one method.",
+      "datasource": { "type": "prometheus", "uid": "oms-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 22 },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(oms_risk_rejections_total[5m])) by (check)", "legendFormat": "{{check}}" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "lineWidth": 1, "fillOpacity": 20, "stacking": { "mode": "normal" }, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Order placement latency (p50 / p95 / p99)",
+      "description": "End to end inside order-service: validation, reference-data lookup, risk, and the transaction that writes the order, the audit row and the outbox entry.",
+      "datasource": { "type": "prometheus", "uid": "oms-prometheus" },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 30 },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum(rate(oms_order_placement_seconds_bucket[5m])) by (le))", "legendFormat": "p50" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum(rate(oms_order_placement_seconds_bucket[5m])) by (le))", "legendFormat": "p95" },
+        { "refId": "C", "expr": "histogram_quantile(0.99, sum(rate(oms_order_placement_seconds_bucket[5m])) by (le))", "legendFormat": "p99" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "lineWidth": 1, "fillOpacity": 5, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Fills applied, duplicates suppressed",
+      "description": "Duplicates are expected, not alarming: Kafka is at-least-once and every consumer is idempotent. A duplicate rate that is high relative to fills means something is replaying.",
+      "datasource": { "type": "prometheus", "uid": "oms-prometheus" },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 30 },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(oms_fills_applied_total[1m]))", "legendFormat": "fills applied/s" },
+        { "refId": "B", "expr": "sum(rate(oms_fills_duplicate_total[1m]))", "legendFormat": "duplicates suppressed/s" },
+        { "refId": "C", "expr": "sum(rate(oms_position_trades_applied_total[1m]))", "legendFormat": "positions updated/s" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "lineWidth": 1, "fillOpacity": 10, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+
+    {
+      "type": "row",
+      "title": "Market data and gateway",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 37 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Streaming subscribers and conflation",
+      "description": "Conflation is a documented delivery model, not an error: a subscriber that falls behind gets the freshest quote per symbol. A rising conflation count means clients cannot keep up, which is a fact about the clients.",
+      "datasource": { "type": "prometheus", "uid": "oms-prometheus" },
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 38 },
+      "targets": [
+        { "refId": "A", "expr": "sum(oms_marketdata_subscribers)", "legendFormat": "subscribers" },
+        { "refId": "B", "expr": "sum(rate(oms_marketdata_conflated_total[1m]))", "legendFormat": "conflated/s" }
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "lineWidth": 1, "fillOpacity": 10, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Quote cache hit ratio",
+      "datasource": { "type": "prometheus", "uid": "oms-prometheus" },
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 38 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(oms_marketdata_quote_cache_total{result=\"hit\"}[5m])) / clamp_min(sum(rate(oms_marketdata_quote_cache_total[5m])), 0.001)",
+          "legendFormat": "hit ratio"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit", "max": 1, "min": 0, "custom": { "lineWidth": 1, "fillOpacity": 10, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Authentication outcomes",
+      "description": "A sustained failure rate on /auth/token is credential stuffing. The route is the most heavily rate-limited in the platform because each attempt costs a deliberately slow BCrypt comparison.",
+      "datasource": { "type": "prometheus", "uid": "oms-prometheus" },
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 38 },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(oms_auth_login_total{outcome=\"success\"}[5m]))", "legendFormat": "success/s" },
+        { "refId": "B", "expr": "sum(rate(oms_auth_login_total{outcome=\"failure\"}[5m]))", "legendFormat": "failure/s" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "lineWidth": 1, "fillOpacity": 10, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+
+    {
+      "type": "row",
+      "title": "JVM",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 45 },
+      "collapsed": true,
+      "panels": [
+        {
+          "type": "timeseries",
+          "title": "Heap used",
+          "datasource": { "type": "prometheus", "uid": "oms-prometheus" },
+          "gridPos": { "h": 7, "w": 8, "x": 0, "y": 46 },
+          "targets": [
+            { "refId": "A", "expr": "sum(jvm_memory_used_bytes{area=\"heap\", service=~\"$service\"}) by (service)", "legendFormat": "{{service}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] }
+        },
+        {
+          "type": "timeseries",
+          "title": "GC pause time",
+          "description": "The reason the matching engine allocates nothing on its hot path: a pause here lands in the p99 of something else entirely.",
+          "datasource": { "type": "prometheus", "uid": "oms-prometheus" },
+          "gridPos": { "h": 7, "w": 8, "x": 8, "y": 46 },
+          "targets": [
+            { "refId": "A", "expr": "sum(rate(jvm_gc_pause_seconds_sum{service=~\"$service\"}[1m])) by (service)", "legendFormat": "{{service}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+        },
+        {
+          "type": "timeseries",
+          "title": "Allocation rate",
+          "datasource": { "type": "prometheus", "uid": "oms-prometheus" },
+          "gridPos": { "h": 7, "w": 8, "x": 16, "y": 46 },
+          "targets": [
+            { "refId": "A", "expr": "sum(rate(jvm_memory_allocated_bytes_total{service=~\"$service\"}[1m])) by (service)", "legendFormat": "{{service}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "Bps" }, "overrides": [] }
+        }
+      ]
+    }
+  ]
+}

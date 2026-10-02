@@ -1,0 +1,126 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  namespace: oms
+  labels: &labels
+    app.kubernetes.io/name: order-service
+    app.kubernetes.io/part-of: oms-platform
+    oms.io/tier: service
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: order-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Never fewer than the current replica count during a rollout, and at most one extra
+      # pod. maxUnavailable: 0 is what makes a deploy zero-downtime; the default of 25% drops
+      # capacity while the new pods are still becoming ready.
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels: *labels
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8081"
+        prometheus.io/path: "/actuator/prometheus"
+    spec:
+      # Pods are replaceable; 30s is enough for in-flight requests to finish and, for
+      # order-service, for the outbox poller to drain its current batch. graceful shutdown is
+      # enabled in application.yml, so SIGTERM starts an orderly stop rather than a kill.
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: order-service
+          image: ghcr.io/hammadshakeel463/oms-order-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: http, containerPort: 8081 }
+          envFrom:
+            - configMapRef: { name: oms-platform-config }
+          env:
+            - name: SERVICE_PORT
+              value: "8081"
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef: { name: oms-db-credentials, key: ORDER_DB_USER }
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: oms-db-credentials, key: ORDER_DB_PASSWORD }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            # readOnlyRootFilesystem means /tmp must be mounted explicitly. The JVM writes
+            # heap dumps and perf data there, and Tomcat needs a work directory.
+            - { name: tmp, mountPath: /tmp }
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }
+            limits:   { memory: "1Gi" }
+            # No CPU limit, deliberately. A CPU limit throttles the container via CFS quota,
+            # and for a JVM that means GC threads and the matching loop being descheduled mid
+            # work - it shows up as latency spikes that look like application bugs. Requests
+            # give the scheduler what it needs; the limit only adds jitter.
+          startupProbe:
+            # Separate from liveness so a slow start is not mistaken for a hang. A Spring
+            # context plus Flyway plus a consumer-group join can take 40s on a cold node;
+            # without this, liveness kills the pod before it ever becomes ready.
+            httpGet: { path: /actuator/health/liveness, port: http }
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: http }
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            # readiness, not liveness, gates traffic. The readiness group in application.yml
+            # includes the database but deliberately NOT Redis: a cold cache degrades latency,
+            # it does not break correctness, and taking a pod out of rotation for it would be
+            # an outage caused by a cache.
+            httpGet: { path: /actuator/health/readiness, port: http }
+            initialDelaySeconds: 25
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 512Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service
+  namespace: oms
+  labels:
+    app.kubernetes.io/name: order-service
+    app.kubernetes.io/part-of: oms-platform
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: order-service
+  ports:
+    - { name: http, port: 8081, targetPort: http }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: order-service
+  namespace: oms
+spec:
+  # Keeps a voluntary disruption - a node drain, a cluster upgrade - from taking the last
+  # replica. Without it, draining one node can remove an entire single-replica service.
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: order-service

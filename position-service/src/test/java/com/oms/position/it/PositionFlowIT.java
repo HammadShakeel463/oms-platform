@@ -23,6 +23,10 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.kafka.core.KafkaTemplate;
+import com.oms.web.security.OmsRoles;
+import com.oms.web.testsupport.TestJwt;
+import com.oms.web.testsupport.TestSecurityConfig;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -47,6 +51,7 @@ import static org.awaitility.Awaitility.await;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("integration-test")
+@Import(TestSecurityConfig.class)
 @Testcontainers
 class PositionFlowIT {
 
@@ -83,7 +88,10 @@ class PositionFlowIT {
 
     private HttpHeaders headers(String accountId) {
         HttpHeaders headers = new HttpHeaders();
-        headers.set("X-Account-Id", accountId);
+        // The rows returned are scoped to the account CLAIM, so each test account needs its
+        // own token rather than a shared one plus a header.
+        headers.set(HttpHeaders.AUTHORIZATION,
+                TestJwt.bearer(accountId, "integration-test", OmsRoles.TRADER));
         return headers;
     }
 

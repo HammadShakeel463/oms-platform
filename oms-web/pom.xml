@@ -24,6 +24,12 @@
             <artifactId>oms-common</artifactId>
         </dependency>
         <dependency>
+            <!-- Structured JSON logging. Compile scope, not provided: logback-spring.xml in
+                 this module is on every service classpath, so the encoder must be too. -->
+            <groupId>net.logstash.logback</groupId>
+            <artifactId>logstash-logback-encoder</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
             <!-- provided: the consuming service brings its own web starter, and this module
@@ -58,5 +64,29 @@
             <artifactId>springdoc-openapi-starter-common</artifactId>
             <scope>provided</scope>
         </dependency>
+        <dependency>
+            <groupId>com.nimbusds</groupId>
+            <artifactId>nimbus-jose-jwt</artifactId>
+            <scope>provided</scope>
+        </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <!-- Publish the test classes as a test-jar so the four services reuse TestJwt
+                     and TestSecurityConfig rather than keeping four copies that drift. Four
+                     private copies of token minting means four slightly different ideas of
+                     what a valid token looks like. -->
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>test-jar</id>
+                        <goals><goal>test-jar</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>

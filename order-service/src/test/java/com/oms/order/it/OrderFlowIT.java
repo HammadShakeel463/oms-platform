@@ -32,6 +32,8 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import com.oms.web.security.OmsRoles;
+import com.oms.web.testsupport.TestJwt;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.test.utils.KafkaTestUtils;
 
@@ -91,8 +93,10 @@ class OrderFlowIT extends AbstractIntegrationTest {
     private HttpHeaders headers() {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.set("X-Account-Id", ACCOUNT);
-        headers.set("X-User-Id", "integration-test");
+        // A real signed token, verified by the production validator. The account and the
+        // audit actor both come from claims - there is no X-Account-Id header any more.
+        headers.set(HttpHeaders.AUTHORIZATION,
+                TestJwt.bearer(ACCOUNT, "integration-test", OmsRoles.TRADER));
         return headers;
     }
 

@@ -1,0 +1,100 @@
+# Alerting rules.
+#
+# Every rule here corresponds to something that has actually gone wrong, or that would be
+# invisible until somebody noticed a wrong number. A rule that fires on a metric nobody acts
+# on trains people to ignore alerts, so the list is deliberately short.
+
+groups:
+  - name: oms-platform
+    interval: 30s
+    rules:
+
+      # ---------------------------------------------------------------------------------
+      #  Correctness before performance
+      # ---------------------------------------------------------------------------------
+
+      - alert: DeadLetterTopicNotEmpty
+        # A message in a dead-letter topic is a message the platform could not process. That
+        # is a page, not a metric somebody reviews weekly.
+        expr: increase(spring_kafka_template_seconds_count{name=~".*dlt.*"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Messages are being dead-lettered ({{ $labels.service }})"
+          description: >-
+            Something is failing every retry. Inspect the DLT with print.headers=true to see
+            the original topic, partition, offset and exception, fix the cause, then replay.
+
+      - alert: OrphanedFills
+        # A fill for an order order-service has never seen means the engine and the order
+        # store disagree about reality. Nothing downstream can be trusted until it is
+        # explained.
+        expr: increase(oms_fills_orphaned_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Fills received for unknown orders"
+          description: "matching-engine reported a trade for an order order-service has no record of."
+
+      - alert: OutboxBacklogGrowing
+        # The outbox drains in milliseconds normally. A sustained backlog means Kafka is
+        # unreachable, so orders are being accepted and never worked - the worst possible
+        # state to be in silently, because the API still returns 201.
+        expr: oms_outbox_backlog > 500
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Transactional outbox is not draining ({{ $value }} rows)"
+          description: >-
+            Orders are being persisted but not published to the matching engine. Clients are
+            receiving 201 for orders that will never be worked.
+
+      - alert: RiskRejectionSpike
+        # Not necessarily a fault - it can be a client misbehaving - but a sudden spike is
+        # either a bad reference price or somebody fat-fingering repeatedly.
+        expr: sum(rate(oms_risk_rejections_total[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pre-trade risk is rejecting {{ $value | printf \"%.1f\" }} orders/second"
+          description: "Check whether a reference price is stale or a client is looping."
+
+      # ---------------------------------------------------------------------------------
+      #  Latency and liveness
+      # ---------------------------------------------------------------------------------
+
+      - alert: MatchingLatencyP99High
+        # The engine's p99 is sub-microsecond in benchmarks. A millisecond means GC pressure,
+        # a pathological book, or CPU starvation - all worth looking at before it is worse.
+        expr: histogram_quantile(0.99, sum(rate(oms_engine_match_seconds_bucket[5m])) by (le)) > 0.001
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Matching p99 above 1ms"
+          description: "Benchmarked p99 is ~500ns. Check GC, book depth and CPU contention."
+
+      - alert: ServiceDown
+        expr: up{job="oms-services"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.service }} is not being scraped"
+          description: "Either the service is down or its actuator endpoint is unreachable."
+
+      - alert: NoTicksPublished
+        # The feed stopping is silent: quote endpoints keep answering from cache until the
+        # TTL expires, so without this alert the first symptom is market orders being
+        # rejected for want of a reference price.
+        expr: rate(oms_marketdata_ticks_published_total[5m]) == 0
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Market data feed has stopped"
+          description: "No ticks published for 3 minutes. Cached quotes will expire shortly."

@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: oms
+  labels:
+    name: oms
+---
+# Deny all ingress by default, then allow only what is needed.
+#
+# This is the manifest that makes the ADR 0007 argument about re-validating tokens concrete:
+# the policy below is a control, but it is a control that one misapplied label can disable,
+# which is exactly why the services do not trust the network for authorisation.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: oms
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+# Only the gateway may be reached from outside the namespace. The services accept traffic
+# from the gateway and from the monitoring namespace (for scraping), and nothing else.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-to-services
+  namespace: oms
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: oms-platform
+      oms.io/tier: service
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: api-gateway
+      ports:
+        - { protocol: TCP, port: 8081 }
+        - { protocol: TCP, port: 8082 }
+        - { protocol: TCP, port: 8083 }
+        - { protocol: TCP, port: 8084 }
+    # Prometheus scrapes the actuator port. Without this the metrics endpoint is unreachable
+    # and every service shows as down.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring

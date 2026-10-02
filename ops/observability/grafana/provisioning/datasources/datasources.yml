@@ -1,0 +1,29 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: oms-prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      timeInterval: 10s
+
+  - name: Tempo
+    type: tempo
+    uid: oms-tempo
+    access: proxy
+    url: http://tempo:3200
+    jsonData:
+      # Links a trace's spans to the metrics for the same service, so a slow trace can be
+      # put in context without leaving the trace view.
+      tracesToMetrics:
+        datasourceUid: oms-prometheus
+        tags:
+          - key: service.name
+            value: service
+      serviceMap:
+        datasourceUid: oms-prometheus
+      nodeGraph:
+        enabled: true

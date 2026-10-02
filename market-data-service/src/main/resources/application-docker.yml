@@ -1,0 +1,34 @@
+# Active inside docker-compose and Kubernetes (SPRING_PROFILES_ACTIVE=docker).
+#
+# Only things that differ from local development live here. Hostnames come from the
+# environment so the same image runs under compose and under Kubernetes unchanged - an image
+# that needs rebuilding to move between them is not a deployable artifact.
+
+oms:
+  environment: docker
+
+management:
+  tracing:
+    # 100% sampling is right for a demo stack and wrong for production: at real volume the
+    # exporter and the backend become the bottleneck. A production value is 1-10%, with
+    # tail-based sampling in the collector to keep the traces that are slow or errored.
+    sampling:
+      probability: ${MANAGEMENT_TRACING_SAMPLING_PROBABILITY:1.0}
+  otlp:
+    tracing:
+      endpoint: ${MANAGEMENT_OTLP_TRACING_ENDPOINT:http://tempo:4318/v1/traces}
+
+spring:
+  kafka:
+    template:
+      # Propagates the trace context into Kafka record headers on send, and resumes it on
+      # receive - so one order is a single trace across five services and two topics rather
+      # than five unrelated traces.
+      observation-enabled: true
+    listener:
+      observation-enabled: true
+
+logging:
+  level:
+    root: INFO
+    com.oms: INFO

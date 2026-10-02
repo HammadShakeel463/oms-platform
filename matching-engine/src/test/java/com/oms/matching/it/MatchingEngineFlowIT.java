@@ -29,6 +29,10 @@ import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.test.utils.KafkaTestUtils;
+import com.oms.web.security.OmsRoles;
+import com.oms.web.testsupport.TestJwt;
+import com.oms.web.testsupport.TestSecurityConfig;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.kafka.KafkaContainer;
@@ -56,6 +60,7 @@ import static org.awaitility.Awaitility.await;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("integration-test")
+@Import(TestSecurityConfig.class)
 @Testcontainers
 class MatchingEngineFlowIT {
 
@@ -78,6 +83,22 @@ class MatchingEngineFlowIT {
 
     private Consumer<String, String> tradeConsumer;
     private Consumer<String, String> reportConsumer;
+
+    /**
+     * Book depth is ADMIN-only: it reveals every resting order. A TRADER token would correctly
+     * get 403 here, which is asserted separately in the gateway tests.
+     */
+    @BeforeEach
+    void authenticate() {
+        var interceptors = rest.getRestTemplate().getInterceptors();
+        if (interceptors.isEmpty()) {
+            interceptors.add((request, body, execution) -> {
+                request.getHeaders().set(org.springframework.http.HttpHeaders.AUTHORIZATION,
+                        TestJwt.bearer("ACC-ADMIN", "integration-test", OmsRoles.ADMIN));
+                return execution.execute(request, body);
+            });
+        }
+    }
 
     @BeforeEach
     void subscribe() {

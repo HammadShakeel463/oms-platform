@@ -1,0 +1,19 @@
+# Everything the build does not need. A fat build context is copied to the daemon on every
+# build and silently invalidates the cache when any ignored file changes.
+target/
+*/target/
+.git/
+.github/
+.idea/
+*.iml
+deploy/
+docs/
+ops/
+*.md
+!README.md
+.mvn/wrapper/*.jar
+jmh-result*.json
+jmh-run.log
+*.hprof
+*.jfr
+.env

@@ -1,0 +1,15 @@
+apiVersion: 1
+
+providers:
+  - name: oms
+    orgId: 1
+    folder: OMS Platform
+    type: file
+    # Dashboards are files in the repository, not rows in Grafana's database. A dashboard
+    # that exists only in the UI disappears with the volume and cannot be code-reviewed.
+    disableDeletion: false
+    allowUiUpdates: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

@@ -5,8 +5,12 @@ audit trail, a price-time priority matching engine, a simulated market data feed
 P&L tracking, and pre-trade risk — built as five Spring Boot microservices over Kafka,
 PostgreSQL and Redis.
 
-> **Build status:** Phase 5 of 7 complete. All five services are feature-complete and secured.
-> `./mvnw test` is green: 330 tests. See [Roadmap](#roadmap).
+> **Build status:** Phase 6 of 7 complete. `./mvnw test` is green: 330 tests.
+>
+> The container, cluster and CI paths are written and statically checked but **have not been
+> executed** - there is no Docker daemon on the machine this was authored on. See
+> [deployment.md section 7](docs/deployment.md#7-what-is-not-yet-verified) for exactly what to
+> run first.
 
 ## Why this project exists
 
@@ -64,6 +68,10 @@ Read in this order:
     exact cost rather than a rounded average, and the case implementations get wrong.
 13. **[docs/security.md](docs/security.md)** — the authorisation matrix, why every service validates
     the token independently, and what is deliberately not covered.
+14. **[docs/deployment.md](docs/deployment.md)** — images, the one-command stack, Kubernetes, CI,
+    and an explicit list of what has not been verified.
+15. **[docs/observability.md](docs/observability.md)** — the three signals, why the matching timer
+    is a histogram and not a mean, and how a trace crosses Kafka.
 
 ## Repository layout
 
@@ -81,10 +89,14 @@ oms-platform/
 ├── market-data-service/ :8083 tick simulator, Redis snapshots, streaming quotes
 ├── position-service/    :8084 positions, realised (average cost) and unrealised P&L
 ├── api-gateway/         :8080 Spring Cloud Gateway: routing, JWT, rate limiting
-├── docs/                      architecture, domain model, Kafka design, ADRs, diagrams
-├── ops/                       topic provisioning, runbook material
-├── deploy/k8s/                Kubernetes manifests (Phase 6)
-└── .github/workflows/         CI (Phase 6)
+├── docs/                      architecture, domain model, Kafka design, security, deployment,
+│                              observability, performance, 7 ADRs
+├── ops/                       topic + Postgres bootstrap, Prometheus rules, Grafana dashboard
+├── deploy/k8s/base/           Deployment/Service/PDB per service, ConfigMap, Secret,
+│                              NetworkPolicies, Ingress, HPAs, kustomization
+├── Dockerfile                 one parameterised multi-stage build for all five services
+├── docker-compose.yml         the whole platform, one command
+└── .github/workflows/ci.yml   unit, integration + coverage gate, manifest lint, image publish
 ```
 
 ## Build
@@ -103,7 +115,13 @@ On Windows use `mvnw.cmd`. The build is verified on JDK 25 compiling to `--relea
 strict superset and is required by two features the brief also asks for - virtual threads and
 pattern matching for switch. See [ADR 0006](docs/adr/0006-target-java-21-not-17.md).
 
-Running the full stack (`docker compose up`) arrives in Phase 6.
+```bash
+docker compose up --build
+```
+
+Brings up PostgreSQL, Kafka, Redis, all five services, Prometheus, Tempo and Grafana. The API is
+on :8080, Swagger UI at /swagger-ui.html, Grafana on :3000. See
+[docs/deployment.md](docs/deployment.md) - and note that this path is not yet verified.
 
 ## Design decisions worth reading first
 
@@ -145,5 +163,5 @@ If you only read seven things:
 | 3 | matching-engine: order book, concurrency design, JMH harness, tuning pass | ✅ Complete |
 | 4 | market-data-service (backpressure) + position-service (P&L) | ✅ Complete |
 | 5 | api-gateway, Spring Security/JWT, OpenAPI | ✅ Complete |
-| 6 | Docker Compose, Kubernetes, GitHub Actions, observability stack | ⏳ |
+| 6 | Docker Compose, Kubernetes, GitHub Actions, observability stack | ✅ Complete |
 | 7 | Architecture diagram, benchmark write-up, interview talking points | ⏳ |
