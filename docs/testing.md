@@ -152,3 +152,57 @@ direction — asserting something the environment could not exercise:
 - A validation test asserted `fieldErrors.length() == 0`. `@JsonInclude(NON_EMPTY)` omits the
   field entirely, so the correct assertion — and the correct statement of the contract — is that
   a client checks for *presence*, not length.
+
+---
+
+## 7. What CI found that no local build could
+
+The first CI run after publishing the repository failed, and it failed on something no local
+command had ever been able to reveal: **the integration tests could not start at all.**
+
+```
+[ERROR] TestEngine with ID 'junit-jupiter' failed to discover tests
+```
+
+Not one test ran. The real cause was only in `order-service/target/failsafe-reports/*.dump`:
+
+```
+Caused by: java.lang.NoClassDefFoundError: com/oms/order/api/dto/PlaceOrderRequest
+```
+
+The integration tests could not see their own module's main classes.
+
+**Why.** Failsafe binds after `package`, and `package` is where Spring Boot's `repackage` goal
+rewrites `order-service.jar` into an executable jar with the application's classes moved under
+`BOOT-INF/classes/`. Failsafe's default `classesDirectory` resolves to that jar, where `com.oms.*`
+is no longer at the root — so discovery dies on the service's own DTO, before any container is
+started and before any assertion is reached.
+
+The fix is one line in the parent POM, with the reasoning kept beside it:
+
+```xml
+<classesDirectory>${project.build.outputDirectory}</classesDirectory>
+```
+
+**Three things about this are worth saying out loud.**
+
+It was **invisible to every local build**, because every local build skipped the integration tests
+— there is no Docker daemon here, so `-DskipITs` was always on, and `skipITs` skips the
+`integration-test` goal entirely, discovery included. The defect lived in the gap between what
+could be run and what was claimed.
+
+It is **not a Docker problem**, which is what the symptom looked like. Discovery happens before
+Testcontainers is touched. Once the POM was fixed, the same `./mvnw verify` on this machine reached
+`Running com.oms.order.it.OrderFlowIT` and failed with `Could not find a valid Docker environment`
+— the correct failure, and the proof that discovery was the real issue. All five ITs now resolve.
+
+And **`matching-engine` was never affected, by accident.** Its `repackage` uses
+`<classifier>app</classifier>` so that `matching-bench` can read the plain jar — a change made in
+phase 3 for an unrelated reason, which left its main artifact untouched and its ITs discoverable.
+One module silently working for a reason that had nothing to do with testing is exactly why the
+other three went unnoticed.
+
+The honest summary: **the suite was documented as "written but not executed", and the word
+"written" was carrying more weight than it had earned.** A test that cannot be discovered is not a
+test that has not run yet; it is a test that would never have run. CI on a machine with a Docker
+daemon is what turned that distinction from a footnote into a red build.

@@ -7,7 +7,8 @@ Commands are given for Windows `cmd.exe` (`mvnw.cmd`). On Linux or macOS use `./
 else is identical.
 
 > **What has and has not been executed.** Stages 1, 2 and 4 are verified. Stages 3 and 5 need a
-> Docker daemon, and have never been run on the authoring machine — see
+> Docker daemon, and have never completed on the authoring machine. Stage 3 reaches the point of
+> starting containers and stops there, which is as far as this machine can get — see
 > [deployment.md §7](deployment.md#7-what-is-not-yet-verified) and
 > [testing.md §5](testing.md#5-what-has-not-been-executed). The quickest way to verify them
 > without installing anything locally is [stage 8](#stage-8--let-ci-do-it).
@@ -77,6 +78,12 @@ mvnw.cmd verify
 
 **Expect:** 518 unit tests plus 5 integration tests. Five to eight minutes on a first run, which
 pulls `postgres:16-alpine`, `apache/kafka:3.8.1` and `redis:7-alpine`.
+
+> These tests were unrunnable until the first CI run exposed why: Failsafe was resolving its
+> classes directory to the Boot-repackaged jar, so discovery failed on the service's own DTO
+> before a container was ever started. Fixed in the parent POM; the story is in
+> [testing.md §7](testing.md#7-what-ci-found-that-no-local-build-could), and it is a good
+> illustration of why "written" is not "verified".
 
 ### What only these tests can establish
 

@@ -192,6 +192,26 @@
                         <includes>
                             <include>**/*IT.java</include>
                         </includes>
+                        <!-- Point Failsafe at target/classes instead of the module's jar.
+
+                             Failsafe runs after `package`, and `package` is where Spring Boot's
+                             repackage goal rewrites the jar into an executable one with the
+                             application's classes under BOOT-INF/classes/. Failsafe's default
+                             classesDirectory resolves to that jar, where com.oms.* is no longer
+                             at the root - so test discovery dies on a NoClassDefFoundError for
+                             the service's own classes, and the whole IT suite fails before a
+                             single test runs.
+
+                             The symptom is deeply unhelpful: "TestEngine with ID 'junit-jupiter'
+                             failed to discover tests", with the real cause only in
+                             target/failsafe-reports/*.dump. It is also invisible to `mvn test`
+                             and to any build that skips ITs, which is how it survived until the
+                             first CI run.
+
+                             matching-engine avoided it by accident - its repackage uses
+                             <classifier>app</classifier> (so matching-bench can read the plain
+                             jar), which leaves the main artifact untouched. -->
+                        <classesDirectory>${project.build.outputDirectory}</classesDirectory>
                         <argLine>@{argLine} -XX:+EnableDynamicAgentLoading -Dnet.bytebuddy.experimental=true</argLine>
                     </configuration>
                     <executions>
