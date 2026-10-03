@@ -55,3 +55,6 @@ capital-markets employer will actually want to talk about.
 | Idempotent consumers, and the reasoning for at-least-once over EOS | `docs/kafka-event-design.md` §4 | 2–4 ✅ |
 | Defence-in-depth auth: the account comes from a signed claim, never a header | ADR 0007 + `docs/security.md` | 5 ✅ |
 | Separation of duties in the role model: RISK can read everything and trade nothing | `docs/security.md` §4 | 5 ✅ |
+| A documented negative result: a hypothesis the benchmark refuted, kept visible rather than quietly dropped | `docs/performance.md` §5 | 3 ✅ |
+| Deterministic trade ids, because the books are in memory and recovery is a replay | `docs/concurrency.md` §9 | 3 ✅ |
+| Interview defence: the 10 likely questions, with the numbers and the C++ contrasts | `docs/talking-points.md` | 7 ✅ |

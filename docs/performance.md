@@ -14,7 +14,7 @@ Everything here is reproducible: see [§8](#8-reproducing-this).
 | CPU | Intel Xeon E5-1650 v3 @ 3.50 GHz, 6 cores / 12 threads |
 | RAM | 12 GB |
 | OS | Windows 11 (26100) |
-| JDK | 25.0.4.1, HotSpot 64-bit Server VM (compiling to `--release 17`) |
+| JDK | 25.0.4.1, HotSpot 64-bit Server VM. **Compiling to `--release 17`** - this run predates [ADR 0006](adr/0006-target-java-21-not-17.md), which raised the project to 21. The engine uses no language or library feature above 17, so the bytecode is unchanged; re-take the figures on 21 before quoting them as current. |
 | JMH | 1.37, 2 forks, 5×1s warmup, 6–8×1s measurement |
 | JVM args | `-Xms1g -Xmx1g -XX:+AlwaysPreTouch -XX:+UseSerialGC` |
 | Profiler | `-prof gc` for allocation rate |

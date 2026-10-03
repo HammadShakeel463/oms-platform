@@ -1,0 +1,57 @@
+%% The life of one order, end to end. Render with https://mermaid.live or the Mermaid CLI.
+%% The two things this diagram exists to show:
+%%   1. the 201 is returned before anything is published - the outbox is the durability boundary
+%%   2. the fill comes back to order-service over Kafka, not as a return value
+sequenceDiagram
+    autonumber
+    actor C as Client
+    participant GW as api-gateway
+    participant OS as order-service
+    participant DB as PostgreSQL
+    participant K as Kafka
+    participant ME as matching-engine
+    participant PS as position-service
+
+    C->>GW: POST /api/v1/orders (Bearer JWT)
+    GW->>GW: verify RS256 + rate limit per account
+    GW->>OS: proxied request
+
+    OS->>OS: bean validation
+    OS->>OS: instrument lookup (Redis-cached)
+    OS->>OS: 3 pre-trade risk checks
+
+    rect rgba(130,170,255,0.12)
+        note over OS,DB: one transaction
+        OS->>DB: INSERT order (NEW to VALIDATED)
+        OS->>DB: INSERT order_audit
+        OS->>DB: INSERT outbox
+    end
+
+    OS-->>C: 201 Created
+    note right of OS: durable, not yet published
+
+    loop outbox poller
+        OS->>DB: SELECT ... FOR UPDATE SKIP LOCKED
+        OS->>K: orders.accepted.v1 (key = symbol)
+        OS->>DB: mark published
+    end
+
+    K->>ME: partition for this symbol (single consumer thread)
+    ME->>ME: match against in-memory price-time book
+    ME->>ME: tradeId = f(symbol, sequence) - deterministic
+    ME->>K: trades.executed.v1
+
+    par order-service applies its own fill
+        K->>OS: trades.executed.v1
+        OS->>DB: INSERT order_fill PK (trade_id, order_id)
+        note right of OS: duplicate key = replay, counted not applied
+        OS->>DB: PARTIALLY_FILLED or FILLED + audit row
+        OS->>K: orders.lifecycle.v1
+    and position-service applies the same fill
+        K->>PS: trades.executed.v1
+        PS->>PS: net quantity, exact open cost, realised P&L
+    end
+
+    C->>GW: GET /api/v1/orders/{id}
+    GW->>OS: proxied request
+    OS-->>C: order + fills + full audit trail
