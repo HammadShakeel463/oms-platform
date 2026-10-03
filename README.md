@@ -14,8 +14,9 @@ PostgreSQL and Redis.
 > [deployment.md §7](docs/deployment.md#7-what-is-not-yet-verified) for exactly what to run
 > first, in priority order.
 
-**Start here:** [docs/talking-points.md](docs/talking-points.md) — the ten questions this project
-attracts, with the answers, the numbers behind them, and what the measurements refuted.
+**Start here:** [docs/runbook.md](docs/runbook.md) to build, run and exercise it, or
+[docs/talking-points.md](docs/talking-points.md) for the ten questions this project attracts —
+with the answers, the numbers behind them, and what the measurements refuted.
 
 ## Why this project exists
 
@@ -244,6 +245,7 @@ engine's threading design in Java Memory Model terms with the C++ mapping.
 | 14 | [observability.md](docs/observability.md) | Three signals, why the matching timer is a histogram, how a trace crosses Kafka |
 | 15 | [testing.md](docs/testing.md) | The 518 tests, what the coverage gate excludes and why, and what has never been executed |
 | 16 | [talking-points.md](docs/talking-points.md) | The ten questions, the answers, and where C++ changed a decision |
+| 17 | [runbook.md](docs/runbook.md) | Build, test, run, and the API walkthrough that demonstrates the domain |
 | — | [ops/kafka-topics.md](ops/kafka-topics.md) | Topic provisioning and the operational commands that matter |
 
 ---
@@ -265,7 +267,7 @@ oms-platform/
 ├── market-data-service/ :8083 tick simulator, Redis snapshots, conflating SSE quote stream
 ├── position-service/    :8084 positions, realised (average cost) and unrealised P&L
 ├── api-gateway/         :8080 Spring Cloud Gateway: routing, JWT issuance + JWKS, rate limiting
-├── docs/                      16 documents, 7 ADRs, 2 diagrams, the raw JMH result JSON
+├── docs/                      17 documents, 7 ADRs, 2 diagrams, the raw JMH result JSON
 ├── ops/                       topic + Postgres bootstrap, Prometheus rules, Grafana dashboard
 ├── deploy/k8s/base/           Deployment/Service/PDB per service, ConfigMap, Secret,
 │                              NetworkPolicies, Ingress, HPAs, kustomization
