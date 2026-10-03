@@ -358,6 +358,26 @@ own project reads as someone who has not operated one.
    it because it is cheap and the measurement that would settle it is specific and named; a reviewer
    is entitled to tell me to delete it.
 
+**And one I found by running my own CI gate.** The documentation claimed ">70% coverage, enforced
+by CI". It was not true: `./mvnw verify -Pcoverage-gate` failed on the first module. The cause is
+worth telling, because it is a real multi-module Java trap — **`oms-web` measured 0% while being
+exercised constantly by four other modules' tests**, since per-module JaCoCo cannot attribute
+cross-module execution. The shared error contract, the trace filter, the roles converter and the
+token validator — code every service depends on — had no tests of their own and looked covered.
+
+What I did: kept the gate **per module** rather than aggregating (an aggregate number would have
+shown a comfortable total and hidden exactly this), wrote the missing tests, and took coverage from
+52% to **81.9% with every module above 70% on its own unit suite**. That work then found a third
+defect: `ResourceServerSupport` renders `ApiError` with the injected `ObjectMapper`, and a bare
+`new ObjectMapper()` cannot serialise its `Instant` — so with a wrongly configured mapper a 401
+would throw while being rendered and surface as a 500 with no body. Production is safe because the
+injected mapper is Boot's. [testing.md §6](testing.md#6-what-this-pass-found) records all three.
+
+The point to land: **a coverage number in a README is a claim, and I ran it.** That is also why
+the same document says the five integration tests have never executed — the gate passing on the
+unit suite alone is a statement about the unit suite, and I will not let a percentage imply more
+than it measures.
+
 **And what is deliberately absent, because scope is a decision too:** no FIX protocol (the brief is
 REST/Kafka, and a FIX engine is a project in itself), no multi-leg or stop/iceberg order types, no
 settlement or clearing, no corporate actions, no real market data vendor, and the gateway signs
@@ -399,7 +419,7 @@ volume this platform will see.
 | "Is it lock-free?" | "I could make it lock-free." | "It should not be. Concurrent mutation of one book destroys the price-time ordering the book exists to establish, and makes the audit trail unimplementable. The parallelism is across symbols." |
 | "Did you use exactly-once?" | "Yes, Kafka EOS." | "No — EOS stops at the edge of PostgreSQL, which is where the money lands. At-least-once plus idempotent writes on natural keys." |
 | "Why not use `double` for price?" | "Precision issues." | "Binary floating point cannot represent 0.01. It is a correctness disqualification, not a precision trade-off." |
-| "Coverage?" | "Over 70%." | "The gate is 70% and CI enforces it — and coverage is a floor, not evidence. The tests I would point at are the 20,000-operation book invariant test and the publication concurrency test." |
+| "Coverage?" | "Over 70%." | "81.9%, gated per module at 70% — and coverage is a floor, not evidence. The tests I would point at are the 20,000-operation book invariant test and the publication concurrency test. I will also tell you that when I first ran my own gate it failed." |
 | "Have you run it?" | Implying yes. | "The Java build, yes — 330 tests. The container and cluster paths, no, and `docs/deployment.md §7` says so in priority order." |
 
 ---
@@ -427,4 +447,4 @@ Signals domain seriousness, and all four are things this project made me want to
 | 6 | [ADR 0002](adr/0002-fixed-point-money-long-ticks-in-the-engine-bigdecimal-at-the-boundary.md) |
 | 7 | [performance.md](performance.md), [matching-engine.md](matching-engine.md) |
 | 9 | [ADR 0001](adr/0001-microservice-boundaries-and-a-shared-contract-module.md), [domain-model.md](domain-model.md) |
-| 10 | [deployment.md §7](deployment.md#7-what-is-not-yet-verified), [security.md](security.md) |
+| 10 | [deployment.md §7](deployment.md#7-what-is-not-yet-verified), [testing.md](testing.md), [security.md](security.md) |

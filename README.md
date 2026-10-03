@@ -5,7 +5,9 @@ audit trail, a price-time priority matching engine, a simulated market data feed
 P&L tracking, and pre-trade risk — built as five Spring Boot microservices over Kafka,
 PostgreSQL and Redis.
 
-> **Build status:** all 7 phases complete. `./mvnw test` is green: **330 tests**.
+> **Build status:** all 7 phases complete. `./mvnw test` is green: **518 tests**, 81.9% line
+> coverage, and `./mvnw verify -Pcoverage-gate` passes the 70% per-module gate on the unit suite
+> alone ([testing.md](docs/testing.md)).
 >
 > The container, cluster and CI paths are written and statically checked but **have not been
 > executed** — there is no Docker daemon on the machine this was authored on. See
@@ -111,7 +113,7 @@ the order path, per account on the position path.
 | Security | Spring Security, RS256 JWT with JWKS, role-based access, per-account rate limiting |
 | API docs | OpenAPI 3 / springdoc — one Swagger UI aggregating five documents |
 | Build | Maven multi-module, 9 modules (wrapper committed — a JDK is the only prerequisite) |
-| Test | JUnit 5, Mockito, AssertJ, Testcontainers, JMH, ArchUnit |
+| Test | JUnit 5, Mockito, AssertJ, Testcontainers, JMH, ArchUnit - 518 tests, 81.9% covered ([testing.md](docs/testing.md)) |
 | Ops | Docker Compose, Kubernetes manifests, GitHub Actions |
 | Observability | Micrometer → Prometheus → Grafana, OTLP tracing across Kafka, JSON logs |
 
@@ -240,7 +242,8 @@ engine's threading design in Java Memory Model terms with the C++ mapping.
 | 12 | [security.md](docs/security.md) | The authorisation matrix, why every service validates independently, what is not covered |
 | 13 | [deployment.md](docs/deployment.md) | Images, the one-command stack, Kubernetes, CI — and §7, what is not verified |
 | 14 | [observability.md](docs/observability.md) | Three signals, why the matching timer is a histogram, how a trace crosses Kafka |
-| 15 | [talking-points.md](docs/talking-points.md) | The ten questions, the answers, and where C++ changed a decision |
+| 15 | [testing.md](docs/testing.md) | The 518 tests, what the coverage gate excludes and why, and what has never been executed |
+| 16 | [talking-points.md](docs/talking-points.md) | The ten questions, the answers, and where C++ changed a decision |
 | — | [ops/kafka-topics.md](ops/kafka-topics.md) | Topic provisioning and the operational commands that matter |
 
 ---
@@ -262,7 +265,7 @@ oms-platform/
 ├── market-data-service/ :8083 tick simulator, Redis snapshots, conflating SSE quote stream
 ├── position-service/    :8084 positions, realised (average cost) and unrealised P&L
 ├── api-gateway/         :8080 Spring Cloud Gateway: routing, JWT issuance + JWKS, rate limiting
-├── docs/                      15 documents, 7 ADRs, 2 diagrams, the raw JMH result JSON
+├── docs/                      16 documents, 7 ADRs, 2 diagrams, the raw JMH result JSON
 ├── ops/                       topic + Postgres bootstrap, Prometheus rules, Grafana dashboard
 ├── deploy/k8s/base/           Deployment/Service/PDB per service, ConfigMap, Secret,
 │                              NetworkPolicies, Ingress, HPAs, kustomization
@@ -312,7 +315,7 @@ Stated here rather than left for a reader to discover.
 
 | | Status |
 |---|---|
-| **The container, cluster and CI paths have never been executed.** Dockerfile, compose, 11 Kubernetes manifests, the Actions workflow and five Testcontainers ITs are written and statically checked only. | [deployment.md §7](docs/deployment.md#7-what-is-not-yet-verified) lists them in priority order |
+| **The container, cluster and CI paths have never been executed.** Dockerfile, compose, 11 Kubernetes manifests, the Actions workflow and the five Testcontainers ITs are written and statically checked only. The Java build and the coverage gate *are* verified. | [deployment.md §7](docs/deployment.md#7-what-is-not-yet-verified) lists them in priority order; [testing.md §5](docs/testing.md#5-what-has-not-been-executed) says what the ITs would add |
 | **Cold-start recovery replays up to the full Kafka retention** (7 days). The fix is periodic book snapshots to a compacted topic so a rebuild replays only the tail. This is a worse problem than anything on the performance page, and it is the next thing to build. | [concurrency.md §9](docs/concurrency.md) |
 | **The node pool's benchmark does not justify it.** Kept because it is cheap and the deciding measurement is named; a reviewer is entitled to say delete it. | [performance.md §5](docs/performance.md#5-the-negative-result-node-pooling-did-not-do-what-i-expected) |
 | **`BigDecimal` and `ArrayList` costs are not separated** in the benchmark — the baseline changes four things at once. The isolating variant is one class and one `@Param`. | [performance.md §7](docs/performance.md#7-what-the-pass-actually-established) |

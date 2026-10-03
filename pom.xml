@@ -223,6 +223,31 @@
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
                 <version>${jacoco.version}</version>
+                <!-- Excluded from BOTH the report and the gate, because an excluded class is
+                     removed from the numerator and the denominator alike. Each entry is here
+                     because measuring it would make the number less informative, not because
+                     it is inconvenient:
+
+                     *Application          - one line, SpringApplication.run. A test that starts
+                                             the context to cover it is a context-load test, and
+                                             those exist on their own merit.
+                     config/KafkaConfig    - producer/consumer factory wiring. The bodies are
+                                             lambdas inside container customisers that execute on
+                                             message dispatch, so the only thing a unit test can
+                                             reach is "a factory returns a factory". The retry and
+                                             DLT behaviour these classes configure is asserted
+                                             behaviourally by the Testcontainers ITs instead.
+
+                     Note what is NOT excluded: SecurityConfig, every listener, every DTO and
+                     every record. Filter-chain rules are behaviour and are tested through
+                     MockMvc; a DTO with no test is a DTO nobody has checked the shape of. -->
+                <configuration>
+                    <excludes>
+                        <exclude>**/*Application.class</exclude>
+                        <exclude>**/config/KafkaConfig.class</exclude>
+                        <exclude>**/config/KafkaConfig$*.class</exclude>
+                    </excludes>
+                </configuration>
                 <executions>
                     <execution>
                         <id>prepare-agent</id>

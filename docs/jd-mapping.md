@@ -24,10 +24,10 @@ What to point at when a job description lists a technology. Kept current as each
 | Redis | `@Cacheable` reference data in two services + write-through quote snapshots with a safety TTL | 2, 4 | ✅ |
 | OpenAPI / Swagger | springdoc on all 5, bearer scheme declared, one Swagger UI aggregating 5 documents | 5 | ✅ |
 | Role-based access | `TRADER` / `RISK` / `ADMIN`, enforced at the gateway AND per service; RISK is read-only by design | 5 | ✅ |
-| JUnit 5 | every module; Surefire wired | 1 | ✅ |
-| Mockito | service-layer tests in 2 services, `@MockitoBean` in 2 slice tests | 2, 4 | ✅ |
+| JUnit 5 | 518 tests in every module; Surefire wired; nested classes and parameterised tests | 1, 7 | ✅ |
+| Mockito | service, messaging and simulator tests across 4 services; `@MockitoBean` in 4 slice tests; `ArgumentCaptor`, `FilteredClassLoader` and `ApplicationContextRunner` where they fit better | 2, 4, 7 | ✅ |
 | Testcontainers | 5 ITs across 4 services — Postgres, Kafka, Redis; shared `TestJwt` test-jar for auth | 2–4, 6 | ✅ written |
-| Coverage > 70% | JaCoCo `coverage-gate` profile, enforced by the CI integration job | 1, 6 | ✅ written |
+| Coverage > 70% | **81.9% aggregate, every module above 70% on its own unit tests**, gated per module by the JaCoCo `coverage-gate` profile. Two documented exclusions, both argued in [testing.md §3](testing.md) | 1, 6, 7 | ✅ **verified** |
 | Global exception handling | `oms-web`: a Boot auto-configuration shared by all 4 web services, 9 handlers, one contract | 1–4 | ✅ |
 | Docker / docker-compose | one parameterised multi-stage Dockerfile, non-root, `docker compose up` brings up the whole stack | 6 | ✅ written |
 | Kubernetes manifests | Deployment + Service + PDB per service, ConfigMap, Secret, NetworkPolicies, Ingress, 2 HPAs, kustomize | 6 | ✅ written |
